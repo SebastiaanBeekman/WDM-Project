@@ -44,7 +44,6 @@ def get_item_from_db(item_id: str) -> StockValue | None:
         abort(400, f"Item: {item_id} not found!")
     return entry
 
-
 @app.post('/item/create/<price>')
 def create_item(price: int):
     key = str(uuid.uuid4())
@@ -107,6 +106,10 @@ def remove_stock(item_id: str, amount: int):
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
+
+@app.get('/log')
+def get_stock_log():
+    return jsonify(logging.getLoggerClass().root.handlers)
 
 
 if __name__ == '__main__':

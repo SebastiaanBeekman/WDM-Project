@@ -1,6 +1,6 @@
 import logging
 import time
-from flask import Flask
+from flask import Flask, jsonify
 from threading import Lock
 
 sequence_lock = Lock()
@@ -12,12 +12,12 @@ DB_ERROR_STR = "DB error"
 app = Flask("ids-service")
 
 
-@app.get('/id/create/')
+@app.get('/create')
 def create_id():
     global counter
     with sequence_lock:
         counter += 1
-        return time.time_ns() + counter/1000        
+        return jsonify({'key': time.time_ns() + counter / 1000})
 
 
 if __name__ == '__main__':
