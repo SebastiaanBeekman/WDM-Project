@@ -3,7 +3,7 @@ import os
 import atexit
 import uuid
 import requests
-
+from enum import Enum
 import redis
 
 from msgspec import msgpack, Struct
@@ -31,6 +31,18 @@ def close_db_connection():
 
 atexit.register(close_db_connection)
 
+class LogType(Enum):
+    CREATE = 1
+    UPDATE = 2
+    DELETE = 3
+    SENT = 4
+    RECEIVED = 5
+
+    
+class LogStatus(Enum):
+    SUCCESS = 1
+    FAILURE = 2
+
 
 class StockValue(Struct):
     stock: int
@@ -39,20 +51,23 @@ class StockValue(Struct):
     
 class LogStockValue(Struct):
     key: str
-    stockvalue: StockValue
+    type: LogType | None
+    status: LogStatus | None
+    StockValue: StockValue | None
+    url: str | None
     dateTime: str
 
 
 def get_item_from_db(item_id: str) -> StockValue | None:
-    # get serialized data
     try:
         entry: bytes = db.get(item_id)
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    # deserialize data if it exists else return null
     entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
     if entry is None:
-        # if item does not exist in the database; abort
+        log_payload = LogStockValue(key=get_id(), status=LogStatus.FAILURE, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+        log = msgpack.encode(log_payload)
+        db.set(str(uuid.uuid4()), log)
         abort(400, f"Item: {item_id} not found!")
     return entry
 
@@ -88,7 +103,7 @@ def get_all_logs():
 def get_all_logs_from(number: int):
     """This function is still broken."""
     try:
-        # Retrieve all keys starting with "log:" from Redis
+        # Retrieve all keys starting with "log:[number]" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
         
         # Retrieve values corresponding to the keys

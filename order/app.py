@@ -16,7 +16,6 @@ from flask import Flask, jsonify, abort, Response
 
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
-
 GATEWAY_URL = os.environ['GATEWAY_URL']
 
 app = Flask("order-service")
