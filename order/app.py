@@ -115,6 +115,7 @@ def create_order(user_id: str):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({'order_id': key, 'log_id': id.text})
 
@@ -196,6 +197,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {id.text}",
                     status=200)
@@ -237,6 +239,7 @@ def checkout(order_id: str):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     app.logger.debug("Checkout successful")
     return Response(f"Checkout successful, log: {id.text}", status=200)

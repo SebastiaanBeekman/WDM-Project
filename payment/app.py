@@ -108,6 +108,7 @@ def create_user():
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({'user_id': key, 'log_id': id.text})
 
@@ -160,6 +161,7 @@ def add_credit(user_id: str, amount: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}, log_id: {id.text}", status=200)
 
@@ -180,6 +182,7 @@ def remove_credit(user_id: str, amount: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}, log_id: {id.text}", status=200)
 

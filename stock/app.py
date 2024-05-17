@@ -112,6 +112,7 @@ def create_item(price: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({'item_id': key, 'log': id.text})
 
@@ -128,6 +129,7 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
     try:
         db.mset(kv_pairs)
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
 
@@ -167,6 +169,7 @@ def add_stock(item_id: str, amount: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id.text}", status=200)
 
@@ -186,6 +189,7 @@ def remove_stock(item_id: str, amount: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id.text}", status=200)
 
