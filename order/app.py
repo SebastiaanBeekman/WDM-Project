@@ -5,6 +5,7 @@ import random
 import uuid
 from collections import defaultdict
 from datetime import datetime
+from enum import Enum
 
 import redis
 import requests
@@ -32,6 +33,7 @@ def close_db_connection():
 
 
 atexit.register(close_db_connection)
+
 
 
 class OrderValue(Struct):
@@ -109,7 +111,7 @@ def create_order(user_id: str):
     key = str(uuid.uuid4())
     ordervalue = OrderValue(paid=False, items=[], user_id=user_id, total_cost=0)
     value = msgpack.encode(ordervalue)
-    log = msgpack.encode(LogOrderValue(key=key, ordervalue=ordervalue, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    log = msgpack.encode(LogOrderValue(key=key, ordervalue=ordervalue, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), type=logType.CREATE))
     pipeline_db.set(key, value)
     pipeline_db.set(id.text, log)
     try:
@@ -185,13 +187,14 @@ def add_item(order_id: str, item_id: str, quantity: int):
     id = get_id()
     order_entry: OrderValue = get_order_from_db(order_id)
     item_reply = send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}")
+    
     if item_reply.status_code != 200:
         # Request failed because item does not exist
         abort(400, f"Item: {item_id} does not exist!")
     item_json: dict = item_reply.json()
     order_entry.items.append((item_id, int(quantity)))
     order_entry.total_cost += int(quantity) * item_json["price"]
-    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), type=logType.UPDATE))
     pipeline_db.set(order_id, msgpack.encode(order_entry))
     pipeline_db.set(id.text, log)
     try:
