@@ -4,6 +4,7 @@ import atexit
 import random
 import uuid
 from collections import defaultdict
+from datetime import datetime
 
 import redis
 import requests
@@ -24,6 +25,7 @@ db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
                               password=os.environ['REDIS_PASSWORD'],
                               db=int(os.environ['REDIS_DB']))
 
+pipeline_db = db.pipeline()
 
 def close_db_connection():
     db.close()
@@ -37,6 +39,12 @@ class OrderValue(Struct):
     items: list[tuple[str, int]]
     user_id: str
     total_cost: int
+    
+
+class LogOrderValue(Struct):
+    key: str
+    ordervalue: OrderValue
+    dateTime: str
 
 
 def get_order_from_db(order_id: str) -> OrderValue | None:
@@ -53,12 +61,59 @@ def get_order_from_db(order_id: str) -> OrderValue | None:
     return entry
 
 
+def get_log_from_db(log_id: str) -> LogOrderValue | None:
+    # get serialized data
+    try:
+        entry: bytes = db.get(log_id)
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    entry: LogOrderValue | None = msgpack.decode(entry, type=LogOrderValue) if entry else None
+    if entry is None:
+        abort(400, f"Log: {log_id} not found!")
+    return entry
+
+
+@app.get('/logs')
+def get_all_logs():
+    try:
+        # Retrieve all keys starting with "log:" from Redis
+        log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
+        
+        # Retrieve values corresponding to the keys
+        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
+
+        return jsonify({'logs': logs}), 200
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+    
+
+@app.get('/logs_from/<number>')
+def get_all_logs_from(number: int):
+    """This function is still broken."""
+    try:
+        # Retrieve all keys starting with "log:" from Redis
+        log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
+        
+        # Retrieve values corresponding to the keys
+        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
+
+        return jsonify({'logs': logs}), 200
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+
+
+
 @app.post('/create/<user_id>')
 def create_order(user_id: str):
+    id = get_id()
     key = str(uuid.uuid4())
-    value = msgpack.encode(OrderValue(paid=False, items=[], user_id=user_id, total_cost=0))
+    ordervalue = OrderValue(paid=False, items=[], user_id=user_id, total_cost=0)
+    value = msgpack.encode(ordervalue)
+    log = msgpack.encode(LogOrderValue(key=key, ordervalue=ordervalue, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    pipeline_db.set(key, value)
+    pipeline_db.set(id.text, log)
     try:
-        db.set(key, value)
+        pipeline_db.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return jsonify({'order_id': key})
@@ -66,6 +121,7 @@ def create_order(user_id: str):
 
 @app.post('/batch_init/<n>/<n_items>/<n_users>/<item_price>')
 def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
+    """Dit boeit niet ofzo"""
 
     n = int(n)
     n_items = int(n_items)
@@ -125,6 +181,7 @@ def send_get_request(url: str):
 
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 def add_item(order_id: str, item_id: str, quantity: int):
+    id = get_id()
     order_entry: OrderValue = get_order_from_db(order_id)
     item_reply = send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}")
     if item_reply.status_code != 200:
@@ -133,8 +190,11 @@ def add_item(order_id: str, item_id: str, quantity: int):
     item_json: dict = item_reply.json()
     order_entry.items.append((item_id, int(quantity)))
     order_entry.total_cost += int(quantity) * item_json["price"]
+    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    pipeline_db.set(order_id, msgpack.encode(order_entry))
+    pipeline_db.set(id.text, log)
     try:
-        db.set(order_id, msgpack.encode(order_entry))
+        pipeline_db.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}",
@@ -148,6 +208,7 @@ def rollback_stock(removed_items: list[tuple[str, int]]):
 
 @app.post('/checkout/<order_id>')
 def checkout(order_id: str):
+    id = get_id()
     app.logger.debug(f"Checking out {order_id}")
     order_entry: OrderValue = get_order_from_db(order_id)
     # get the quantity per item
@@ -170,12 +231,39 @@ def checkout(order_id: str):
         rollback_stock(removed_items)
         abort(400, "User out of credit")
     order_entry.paid = True
+    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    pipeline_db.set(order_id, msgpack.encode(order_entry))
+    pipeline_db.set(id.text, log)
     try:
-        db.set(order_id, msgpack.encode(order_entry))
+        pipeline_db.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     app.logger.debug("Checkout successful")
     return Response("Checkout successful", status=200)
+
+
+@app.get('/log/<log_id>')
+def find_log(log_id: str):
+    log_entry: LogOrderValue = get_log_from_db(log_id)
+    return jsonify(
+        {
+            "key": log_entry.key,
+            "paid": log_entry.ordervalue.paid,
+            "items": log_entry.ordervalue.items,
+            "user_id": log_entry.ordervalue.user_id,
+            "total_cost": log_entry.ordervalue.total_cost,
+            "dateTime": log_entry.dateTime
+        }
+    )
+
+
+def get_id():
+    try:
+        response = requests.get(f"{GATEWAY_URL}/ids/create")
+    except requests.exceptions.RequestException:
+        abort(400, REQ_ERROR_STR)
+    else:
+        return response
 
 
 if __name__ == '__main__':
