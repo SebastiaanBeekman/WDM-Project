@@ -195,9 +195,19 @@ def find_order(order_id: str):
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 def add_item(order_id: str, item_id: str, quantity: int):
     log_id = str(uuid.uuid4())
-    url = f"{GATEWAY_URL}/stock/find/{item_id}"
+    url = f"{GATEWAY_URL}/order/addItem/{order_id}/{item_id}/{quantity}"
     
-    # Create a log entry for the sent request
+    # Create a log entry for the received request
+    received_payload = LogOrderValue(
+        key=log_id, 
+        type=LogType.RECEIVED,
+        url=url,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_id(), msgpack.encode(received_payload))
+    
+    # Create a log entry for the received request
     sent_payload = LogOrderValue(
         key=log_id, 
         type=LogType.SENT,
@@ -214,7 +224,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
     received_payload = LogOrderValue(
         key=log_id,
         type=LogType.RECEIVED,
-        url=f"/addItem/{order_id}/{item_id}/{quantity}",
+        url=url,
         status=LogStatus.SUCCESS if item_reply.status_code == 200 else LogStatus.FAILURE,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
@@ -234,7 +244,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
     update_payload = LogOrderValue(
         key=log_id, 
         type=LogType.UPDATE,
-        url=f"/addItem/{order_id}/{item_id}/{quantity}",
+        url=url,
         ordervalue=order_entry, 
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), 
     )
@@ -247,6 +257,17 @@ def add_item(order_id: str, item_id: str, quantity: int):
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
+    
+    # Create a log for the sent response
+    sent_payload = LogOrderValue(
+        key=log_id,
+        type=LogType.SENT,
+        url=url,
+        status=LogStatus.SUCCESS,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_id(), msgpack.encode(sent_payload))
+    
     return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {log_id.text}", status=200)
 
 

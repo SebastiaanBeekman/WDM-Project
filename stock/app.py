@@ -174,6 +174,15 @@ def create_item(price: int):
         app.logger.debug(f"Item: {item_id} failed to create")
         return abort(400, DB_ERROR_STR)
     
+    sent_payload = LogStockValue(
+        key=log_id,
+        type=LogType.SENT,
+        url=url,
+        status=LogStatus.SUCCESS,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_id(), msgpack.encode(sent_payload))
+    
     return jsonify({'item_id': item_id, 'log': log_key})
 
 
