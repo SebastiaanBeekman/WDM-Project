@@ -58,7 +58,7 @@ def get_item_from_db(item_id: str) -> StockValue | None:
 
 
 
-def get_log_from_db(log_id: str) -> StockValue | None:
+def get_log_from_db(log_id: str) -> LogStockValue | None:
     # get serialized data
     try:
         entry: bytes = db.get(log_id)
@@ -70,6 +70,33 @@ def get_log_from_db(log_id: str) -> StockValue | None:
     return entry
 
 
+@app.get('/logs')
+def get_all_logs():
+    try:
+        # Retrieve all keys starting with "log:" from Redis
+        log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
+        
+        # Retrieve values corresponding to the keys
+        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
+
+        return jsonify({'logs': logs}), 200
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+    
+
+@app.get('/logs_from/<number>')
+def get_all_logs_from(number: int):
+    try:
+        # Retrieve all keys starting with "log:" from Redis
+        log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
+        
+        # Retrieve values corresponding to the keys
+        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
+
+        return jsonify({'logs': logs}), 200
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+    
 
 @app.post('/item/create/<price>')
 def create_item(price: int):
@@ -91,8 +118,7 @@ def create_item(price: int):
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
 def batch_init_users(n: int, starting_stock: int, item_price: int):
-    """This function appraenlty boeit niet.
-    """
+    """This function apparenlty boeit niet."""
     n = int(n)
     starting_stock = int(starting_stock)
     item_price = int(item_price)
@@ -141,7 +167,7 @@ def add_stock(item_id: str, amount: int):
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log: {id.text}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id.text}", status=200)
 
 
 @app.post('/subtract/<item_id>/<amount>')
@@ -160,37 +186,8 @@ def remove_stock(item_id: str, amount: int):
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log: {id.text}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id.text}", status=200)
 
-
-
-@app.get('/logs')
-def get_all_logs():
-    try:
-        # Retrieve all keys starting with "log:" from Redis
-        log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
-        
-        # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
-
-        return jsonify({'logs': logs}), 200
-    except redis.exceptions.RedisError:
-        return abort(500, 'Failed to retrieve logs from the database')
-    
-
-@app.get('/logs_from/<number>')
-def get_all_logs_from(number: int):
-    try:
-        # Retrieve all keys starting with "log:" from Redis
-        log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
-        
-        # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
-
-        return jsonify({'logs': logs}), 200
-    except redis.exceptions.RedisError:
-        return abort(500, 'Failed to retrieve logs from the database')
-    
 
 
 @app.get('/log')
