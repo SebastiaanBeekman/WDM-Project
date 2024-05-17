@@ -86,6 +86,7 @@ def get_all_logs():
 
 @app.get('/logs_from/<number>')
 def get_all_logs_from(number: int):
+    """This function is still broken."""
     try:
         # Retrieve all keys starting with "log:" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
