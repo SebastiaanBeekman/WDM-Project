@@ -207,24 +207,26 @@ def add_item(order_id: str, item_id: str, quantity: int):
     )
     db.set(get_id(), msgpack.encode(received_payload))
     
+    request_url = f"{GATEWAY_URL}/stock/find/{item_id}"
+    
     # Create a log entry for the received request
     sent_payload = LogOrderValue(
         key=log_id, 
         type=LogType.SENT,
-        url=url,
+        url=request_url,
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), 
     )
     db.set(get_id(), msgpack.encode(sent_payload))
     
     # Send the request
-    item_reply = send_get_request(url, {"log_id": log_id})
+    item_reply = send_get_request(request_url, {"log_id": log_id})
     
     # Create a log entry for the received response (success or failure)
     received_payload = LogOrderValue(
         key=log_id,
         type=LogType.RECEIVED,
-        url=url,
+        url=request_url,
         status=LogStatus.SUCCESS if item_reply.status_code == 200 else LogStatus.FAILURE,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
