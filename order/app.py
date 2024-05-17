@@ -24,16 +24,12 @@ db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
                               port=int(os.environ['REDIS_PORT']),
                               password=os.environ['REDIS_PASSWORD'],
                               db=int(os.environ['REDIS_DB']))
-
 pipeline_db = db.pipeline()
 
 def close_db_connection():
     db.close()
 
-
 atexit.register(close_db_connection)
-
-
 
 class OrderValue(Struct):
     paid: bool
@@ -41,11 +37,45 @@ class OrderValue(Struct):
     user_id: str
     total_cost: int
     
+class LogType(Enum):
+    CREATE = 1
+    UPDATE = 2
+    DELETE = 3
+    SENT = 4
+    RECEIVED = 5
+
+    
+class LogStatus(Enum):
+    PENDING = 1
+    SUCCESS = 2
+    FAILURE = 3
 
 class LogOrderValue(Struct):
     key: str
-    ordervalue: OrderValue
+    type: LogType | None
+    status: LogStatus | None
+    ordervalue: OrderValue | None
+    url: str | None
     dateTime: str
+
+
+def send_post_request(url: str):
+    try:
+        response = requests.post(url)
+    except requests.exceptions.RequestException:
+        abort(400, REQ_ERROR_STR)
+    else:
+        return response
+
+
+def send_get_request(url: str, optional_param: dict[str, str] = {}):
+    url = url_for(url, **optional_param) # The ** operator unpacks the dictionary into keyword arguments
+    try:
+        response = requests.get(url)
+    except requests.exceptions.RequestException:
+        abort(400, REQ_ERROR_STR)
+    else:
+        return response
 
 
 def get_order_from_db(order_id: str) -> OrderValue | None:
@@ -121,10 +151,9 @@ def create_order(user_id: str):
     return jsonify({'order_id': key, 'log_id': id.text})
 
 
+# Can Ignore
 @app.post('/batch_init/<n>/<n_items>/<n_users>/<item_price>')
 def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
-    """Dit boeit niet ofzo"""
-
     n = int(n)
     n_items = int(n_items)
     n_users = int(n_users)
@@ -163,46 +192,62 @@ def find_order(order_id: str):
     )
 
 
-def send_post_request(url: str):
-    try:
-        response = requests.post(url)
-    except requests.exceptions.RequestException:
-        abort(400, REQ_ERROR_STR)
-    else:
-        return response
-
-
-def send_get_request(url: str):
-    try:
-        response = requests.get(url)
-    except requests.exceptions.RequestException:
-        abort(400, REQ_ERROR_STR)
-    else:
-        return response
-
-
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 def add_item(order_id: str, item_id: str, quantity: int):
-    id = get_id()
-    order_entry: OrderValue = get_order_from_db(order_id)
-    item_reply = send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}")
+    log_id = str(uuid.uuid4())
+    url = f"{GATEWAY_URL}/stock/find/{item_id}"
     
+    # Create a log entry for the sent request
+    sent_payload = LogOrderValue(
+        key=log_id, 
+        type=LogType.SENT,
+        url=url,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), 
+    )
+    db.set(get_id(), msgpack.encode(sent_payload))
+    
+    # Send the request
+    item_reply = send_get_request(url, {"log_id": log_id})
+    
+    # Create a log entry for the received response (success or failure)
+    received_payload = LogOrderValue(
+        key=log_id,
+        type=LogType.RECEIVED,
+        url=f"/addItem/{order_id}/{item_id}/{quantity}",
+        status=LogStatus.SUCCESS if item_reply.status_code == 200 else LogStatus.FAILURE,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_id(), msgpack.encode(received_payload))
+    
+    # Request failed because item does not exist
     if item_reply.status_code != 200:
-        # Request failed because item does not exist
         abort(400, f"Item: {item_id} does not exist!")
+    
+    # Locally update the order value
     item_json: dict = item_reply.json()
+    order_entry: OrderValue = get_order_from_db(order_id)
     order_entry.items.append((item_id, int(quantity)))
     order_entry.total_cost += int(quantity) * item_json["price"]
-    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), type=logType.UPDATE))
+    
+    # Create a log entry for the update request
+    update_payload = LogOrderValue(
+        key=log_id, 
+        type=LogType.UPDATE,
+        url=f"/addItem/{order_id}/{item_id}/{quantity}",
+        ordervalue=order_entry, 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), 
+    )
+    
+    # Set the log entry and the updated order value in the pipeline
+    pipeline_db.set(get_id(), msgpack.encode(update_payload))
     pipeline_db.set(order_id, msgpack.encode(order_entry))
-    pipeline_db.set(id.text, log)
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {id.text}",
-                    status=200)
+    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {log_id.text}", status=200)
 
 
 def rollback_stock(removed_items: list[tuple[str, int]]):
@@ -268,7 +313,7 @@ def get_id():
     except requests.exceptions.RequestException:
         abort(400, REQ_ERROR_STR)
     else:
-        return response
+        return response.text
 
 
 if __name__ == '__main__':
