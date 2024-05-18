@@ -24,8 +24,10 @@ db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
                               db=int(os.environ['REDIS_DB']))
 pipeline_db = db.pipeline()
 
+
 def close_db_connection():
     db.close()
+
 
 atexit.register(close_db_connection)
 
@@ -42,20 +44,20 @@ class LogType(Enum):
     SENT = 4
     RECEIVED = 5
 
-    
+
 class LogStatus(Enum):
     PENDING = 1
     SUCCESS = 2
     FAILURE = 3
-    
-    
+
+
 class LogStockValue(Struct):
     key: str
-    type: LogType | None
-    status: LogStatus | None
-    StockValue: StockValue | None
-    url: str | None
     dateTime: str
+    type: LogType | None = None
+    status: LogStatus | None = None
+    stockvalue: StockValue | None = None
+    url: str | None = None
 
 
 def get_item_from_db(item_id: str, log_id: str | None = None, url: str | None = None) -> StockValue | None:
@@ -63,20 +65,19 @@ def get_item_from_db(item_id: str, log_id: str | None = None, url: str | None = 
         entry: bytes = db.get(item_id)
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    
+
     entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
-    
+
     if entry is None:
         log_payload = LogStockValue(
-            key=log_id if log_id else str(uuid.uuid4()), 
+            key=log_id if log_id else str(uuid.uuid4()),
             type=LogType.SENT,
             url=url,
-            status=LogStatus.FAILURE, 
+            status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
         db.set(get_id(), msgpack.encode(log_payload))
         return abort(400, f"Item: {item_id} not found!")
     return entry
-
 
 
 def get_log_from_db(log_id: str) -> LogStockValue | None:
@@ -89,6 +90,7 @@ def get_log_from_db(log_id: str) -> LogStockValue | None:
     if entry is None:
         abort(400, f"Log: {log_id} not found!")
     return entry
+
 
 @app.get('/log/<log_id>')
 def find_log(log_id: str):
@@ -108,38 +110,38 @@ def get_all_logs():
     try:
         # Retrieve all keys starting with "log:" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
-        
+
         # Retrieve values corresponding to the keys
         logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-    
+
 
 @app.get('/logs_from/<number>')
 def get_all_logs_from(number: int):
     """This function is still broken."""
-    
+
     log_id = request.args.get('log_id')
-    
+
     try:
         # Retrieve all keys starting with "log:[number]" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
-        
+
         # Retrieve values corresponding to the keys
         logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-    
+
 
 @app.post('/item/create/<price>')
 def create_item(price: int):
     log_id = str(uuid.uuid4())
     url = f"/item/create/{price}"
-    
+
     # Create a log entry for the receieved request
     received_payload = LogStockValue(
         key=log_id,
@@ -149,19 +151,19 @@ def create_item(price: int):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     db.set(get_id(), msgpack.encode(received_payload))
-    
+
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
-    
+
     # Create a log entry for the create request
     create_payload = LogStockValue(
         key=log_id,
         type=LogType.CREATE,
         url=url,
-        stockvalue=stock_value, 
+        stockvalue=stock_value,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    
+
     # Set the log entry and the updated item in the pipeline
     log_key = get_id()
     pipeline_db.set(log_key, msgpack.encode(create_payload))
@@ -173,7 +175,7 @@ def create_item(price: int):
         pipeline_db.discard()
         app.logger.debug(f"Item: {item_id} failed to create")
         return abort(400, DB_ERROR_STR)
-    
+
     sent_payload = LogStockValue(
         key=log_id,
         type=LogType.SENT,
@@ -182,15 +184,15 @@ def create_item(price: int):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     db.set(get_id(), msgpack.encode(sent_payload))
-    
+
     return jsonify({'item_id': item_id, 'log': log_key})
 
 
 @app.get('/find/<item_id>')
 def find_item(item_id: str):
-    log_id: str | None = request.args.get('log_id') # Optional query parameter (Passed in app, but not in Postman)
+    log_id: str | None = request.args.get('log_id')  # Optional query parameter (Passed in app, but not in Postman)
     url = f"/find/{item_id}"
-    
+
     # Create a log entry for the receieved request
     received_payload = LogStockValue(
         key=log_id if log_id else str(uuid.uuid4()),
@@ -200,10 +202,10 @@ def find_item(item_id: str):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     db.set(get_id(), msgpack.encode(received_payload))
-    
+
     # Retrieve the item from the database
     item_entry: StockValue = get_item_from_db(item_id, log_id, url)
-    
+
     # Create a log entry for the sent response
     sent_payload = LogStockValue(
         key=log_id if log_id else str(uuid.uuid4()),
@@ -213,7 +215,7 @@ def find_item(item_id: str):
         datetime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     db.set(get_id(), msgpack.encode(sent_payload))
-    
+
     # Return the item
     return jsonify(
         {
@@ -229,8 +231,14 @@ def add_stock(item_id: str, amount: int):
     item_entry: StockValue = get_item_from_db(item_id)
     # update stock, serialize and update database
     item_entry.stock += int(amount)
-    log = msgpack.encode(LogStockValue(key=item_id, stockvalue=item_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
-    
+    log = msgpack.encode(
+        LogStockValue(
+            key=item_id,
+            stockvalue=item_entry,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+    )
+
     pipeline_db.set(item_id, msgpack.encode(item_entry))
     pipeline_db.set(id.text, log)
     try:
@@ -248,7 +256,13 @@ def remove_stock(item_id: str, amount: int):
     # update stock, serialize and update database
     item_entry.stock -= int(amount)
     app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
-    log = msgpack.encode(LogStockValue(key=item_id, stockvalue=item_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    log = msgpack.encode(
+        LogStockValue(
+            key=item_id,
+            stockvalue=item_entry,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+    )
     if item_entry.stock < 0:
         abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
     pipeline_db.set(item_id, msgpack.encode(item_entry))
@@ -267,15 +281,16 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
     n = int(n)
     starting_stock = int(starting_stock)
     item_price = int(item_price)
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(StockValue(stock=starting_stock, price=item_price))
-                                  for i in range(n)}
+    kv_pairs: dict[str, bytes] = {
+        f"{i}": msgpack.encode(StockValue(stock=starting_stock, price=item_price))
+        for i in range(n)
+    }
     try:
         db.mset(kv_pairs)
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
-
 
 
 def get_id():
