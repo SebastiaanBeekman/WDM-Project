@@ -11,7 +11,7 @@ import redis
 import requests
 
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response
+from flask import Flask, jsonify, abort, Response, url_for
 
 
 DB_ERROR_STR = "DB error"
@@ -20,23 +20,29 @@ GATEWAY_URL = os.environ['GATEWAY_URL']
 
 app = Flask("order-service")
 
-db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
-                              port=int(os.environ['REDIS_PORT']),
-                              password=os.environ['REDIS_PASSWORD'],
-                              db=int(os.environ['REDIS_DB']))
+db: redis.Redis = redis.Redis(
+    host=os.environ['REDIS_HOST'],
+    port=int(os.environ['REDIS_PORT']),
+    password=os.environ['REDIS_PASSWORD'],
+    db=int(os.environ['REDIS_DB'])
+)
 pipeline_db = db.pipeline()
+
 
 def close_db_connection():
     db.close()
 
+
 atexit.register(close_db_connection)
+
 
 class OrderValue(Struct):
     paid: bool
     items: list[tuple[str, int]]
     user_id: str
     total_cost: int
-    
+
+
 class LogType(Enum):
     CREATE = 1
     UPDATE = 2
@@ -44,11 +50,12 @@ class LogType(Enum):
     SENT = 4
     RECEIVED = 5
 
-    
+
 class LogStatus(Enum):
     PENDING = 1
     SUCCESS = 2
     FAILURE = 3
+
 
 class LogOrderValue(Struct):
     key: str
@@ -68,8 +75,10 @@ def send_post_request(url: str):
         return response
 
 
-def send_get_request(url: str, optional_param: dict[str, str] = {}):
-    url = url_for(url, **optional_param) # The ** operator unpacks the dictionary into keyword arguments
+def send_get_request(url: str, optional_params: dict[str, str] | None = None):
+    if optional_params is None:
+        optional_params = {}
+    url = url_for(url, **optional_params)  # The ** operator unpacks the dictionary into keyword arguments
     try:
         response = requests.get(url)
     except requests.exceptions.RequestException:
@@ -109,14 +118,14 @@ def get_all_logs():
     try:
         # Retrieve all keys starting with "log:" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
-        
+
         # Retrieve values corresponding to the keys
         logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-    
+
 
 @app.get('/logs_from/<number>')
 def get_all_logs_from(number: int):
@@ -124,14 +133,13 @@ def get_all_logs_from(number: int):
     try:
         # Retrieve all keys starting with "log:" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
-        
+
         # Retrieve values corresponding to the keys
         logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-
 
 
 @app.post('/create/<user_id>')
@@ -140,7 +148,14 @@ def create_order(user_id: str):
     key = str(uuid.uuid4())
     ordervalue = OrderValue(paid=False, items=[], user_id=user_id, total_cost=0)
     value = msgpack.encode(ordervalue)
-    log = msgpack.encode(LogOrderValue(key=key, ordervalue=ordervalue, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), type=logType.CREATE))
+    log = msgpack.encode(
+        LogOrderValue(
+            key=key,
+            ordervalue=ordervalue,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            type=LogType.CREATE
+        )
+    )
     pipeline_db.set(key, value)
     pipeline_db.set(id.text, log)
     try:
@@ -196,32 +211,32 @@ def find_order(order_id: str):
 def add_item(order_id: str, item_id: str, quantity: int):
     log_id = str(uuid.uuid4())
     url = f"{GATEWAY_URL}/order/addItem/{order_id}/{item_id}/{quantity}"
-    
+
     # Create a log entry for the received request
     received_payload = LogOrderValue(
-        key=log_id, 
+        key=log_id,
         type=LogType.RECEIVED,
         url=url,
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_id(), msgpack.encode(received_payload))
-    
+
     request_url = f"{GATEWAY_URL}/stock/find/{item_id}"
-    
+
     # Create a log entry for the received request
     sent_payload = LogOrderValue(
-        key=log_id, 
+        key=log_id,
         type=LogType.SENT,
         url=request_url,
         status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_id(), msgpack.encode(sent_payload))
-    
+
     # Send the request
     item_reply = send_get_request(request_url, {"log_id": log_id})
-    
+
     # Create a log entry for the received response (success or failure)
     received_payload = LogOrderValue(
         key=log_id,
@@ -231,26 +246,26 @@ def add_item(order_id: str, item_id: str, quantity: int):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_id(), msgpack.encode(received_payload))
-    
+
     # Request failed because item does not exist
     if item_reply.status_code != 200:
         abort(400, f"Item: {item_id} does not exist!")
-    
+
     # Locally update the order value
     item_json: dict = item_reply.json()
     order_entry: OrderValue = get_order_from_db(order_id)
     order_entry.items.append((item_id, int(quantity)))
     order_entry.total_cost += int(quantity) * item_json["price"]
-    
+
     # Create a log entry for the update request
     update_payload = LogOrderValue(
-        key=log_id, 
+        key=log_id,
         type=LogType.UPDATE,
         url=url,
-        ordervalue=order_entry, 
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"), 
+        ordervalue=order_entry,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
-    
+
     # Set the log entry and the updated order value in the pipeline
     pipeline_db.set(get_id(), msgpack.encode(update_payload))
     pipeline_db.set(order_id, msgpack.encode(order_entry))
@@ -259,7 +274,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
-    
+
     # Create a log for the sent response
     sent_payload = LogOrderValue(
         key=log_id,
@@ -269,7 +284,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_id(), msgpack.encode(sent_payload))
-    
+
     return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {log_id.text}", status=200)
 
 
@@ -303,7 +318,8 @@ def checkout(order_id: str):
         rollback_stock(removed_items)
         abort(400, "User out of credit")
     order_entry.paid = True
-    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry,
+                         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
     pipeline_db.set(order_id, msgpack.encode(order_entry))
     pipeline_db.set(id.text, log)
     try:
