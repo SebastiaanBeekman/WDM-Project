@@ -210,7 +210,7 @@ def find_order(order_id: str):
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 def add_item(order_id: str, item_id: str, quantity: int):
     log_id = str(uuid.uuid4())
-    url = f"{GATEWAY_URL}/order/addItem/{order_id}/{item_id}/{quantity}"
+    url = f"{GATEWAY_URL}/orders/addItem/{order_id}/{item_id}/{quantity}"
 
     # Create a log entry for the received request
     received_payload = LogOrderValue(
@@ -301,7 +301,7 @@ def checkout(order_id: str):
     user_request_id = get_id()
 
     # url of the current checkout
-    url = f"{GATEWAY_URL}/order/checkout/{order_id}"
+    url = f"{GATEWAY_URL}/orders/checkout/{order_id}"
 
     # Create a log entry for the received request
     received_payload_from_user = LogOrderValue(
