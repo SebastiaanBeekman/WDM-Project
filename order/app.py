@@ -59,11 +59,11 @@ class LogStatus(Enum):
 
 class LogOrderValue(Struct):
     key: str
-    type: LogType | None
-    status: LogStatus | None
-    ordervalue: OrderValue | None
-    url: str | None
     dateTime: str
+    type: LogType | None = None
+    status: LogStatus | None = None
+    ordervalue: OrderValue | None = None
+    url: str | None = None
 
 
 def send_post_request(url: str):
@@ -157,13 +157,13 @@ def create_order(user_id: str):
         )
     )
     pipeline_db.set(key, value)
-    pipeline_db.set(id.text, log)
+    pipeline_db.set(id, log)
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
-    return jsonify({'order_id': key, 'log_id': id.text})
+    return jsonify({'order_id': key, 'log_id': id})
 
 
 # Can Ignore
@@ -285,7 +285,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
     )
     db.set(get_id(), msgpack.encode(sent_payload))
 
-    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {log_id.text}", status=200)
+    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {log_id}", status=200)
 
 
 def rollback_stock(removed_items: list[tuple[str, int]]):
@@ -295,40 +295,123 @@ def rollback_stock(removed_items: list[tuple[str, int]]):
 
 @app.post('/checkout/<order_id>')
 def checkout(order_id: str):
-    id = get_id()
-    app.logger.debug(f"Checking out {order_id}")
-    order_entry: OrderValue = get_order_from_db(order_id)
+
+    # generate IDs for the log
+    log_id = str(uuid.uuid4())
+    user_request_id = get_id()
+
+    # url of the current checkout
+    url = f"{GATEWAY_URL}/order/checkout/{order_id}"
+
+    # Create a log entry for the received request
+    received_payload_from_user = LogOrderValue(
+        key=log_id,
+        type=LogType.RECEIVED,
+        url=url,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(user_request_id, msgpack.encode(received_payload_from_user))
+
+    # app.logger.debug(f"Checking out {order_id}")
+    order_entry: OrderValue | None = get_order_from_db(order_id)
+
     # get the quantity per item
     items_quantities: dict[str, int] = defaultdict(int)
     for item_id, quantity in order_entry.items:
         items_quantities[item_id] += quantity
-    # The removed items will contain the items that we already have successfully subtracted stock from
-    # for rollback purposes.
+
+    # The removed items will contain the items that we already have successfully subtracted stock from for rollback purposes.
     removed_items: list[tuple[str, int]] = []
     for item_id, quantity in items_quantities.items():
-        stock_reply = send_post_request(f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}")
+
+        # Create a log entry for the sent request
+        request_url = f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}"
+
+        sent_payload_to_stock = LogOrderValue(
+            key=log_id,
+            type=LogType.SENT,
+            url=request_url,
+            status=LogStatus.PENDING,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_id(), msgpack.encode(sent_payload_to_stock))
+
+        # actually sending the request
+        stock_reply = send_post_request(request_url)
+
+        received_payload_from_stock = LogOrderValue(
+            key=log_id,
+            type=LogType.RECEIVED,
+            url=request_url,
+            status=LogStatus.SUCCESS if stock_reply.status_code == 200 else LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_id(), msgpack.encode(received_payload_from_stock))
+
         if stock_reply.status_code != 200:
             # If one item does not have enough stock we need to rollback
             rollback_stock(removed_items)
             abort(400, f'Out of stock on item_id: {item_id}')
         removed_items.append((item_id, quantity))
-    user_reply = send_post_request(f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}")
-    if user_reply.status_code != 200:
+
+    # Create a log entry for the sent request
+    payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
+
+    sent_payload_to_payment = LogOrderValue(
+        key=log_id,
+        type=LogType.SENT,
+        url=payment_request_url,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_id(), msgpack.encode(sent_payload_to_payment))
+
+    payment_reply = send_post_request(payment_request_url)
+
+    # Create a log entry for the received response (success or failure)
+    received_payload_from_payment = LogOrderValue(
+        key=log_id,
+        type=LogType.RECEIVED,
+        url=request_url,
+        status=LogStatus.SUCCESS if payment_reply.status_code == 200 else LogStatus.FAILURE,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_id(), msgpack.encode(received_payload_from_payment))
+
+    if payment_reply.status_code != 200:
         # If the user does not have enough credit we need to rollback all the item stock subtractions
         rollback_stock(removed_items)
         abort(400, "User out of credit")
     order_entry.paid = True
-    log = msgpack.encode(LogOrderValue(key=order_id, ordervalue=order_entry,
-                         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    log = msgpack.encode(
+        LogOrderValue(
+            key=order_id,
+            ordervalue=order_entry,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+    )
     pipeline_db.set(order_id, msgpack.encode(order_entry))
-    pipeline_db.set(id.text, log)
+    pipeline_db.set(user_request_id, log)
+
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
+
+    # Create a log for the sent response
+    sent_payload = LogOrderValue(
+        key=log_id,
+        type=LogType.SENT,
+        url=url,
+        status=LogStatus.SUCCESS,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_id(), msgpack.encode(sent_payload))
+
     app.logger.debug("Checkout successful")
-    return Response(f"Checkout successful, log: {id.text}", status=200)
+    return Response(f"Checkout successful, log: {user_request_id}", status=200)
 
 
 @app.get('/log/<log_id>')
