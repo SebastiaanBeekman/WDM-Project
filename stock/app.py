@@ -212,7 +212,7 @@ def find_item(item_id: str):
         type=LogType.SENT,
         url=url,
         status=LogStatus.SUCCESS,
-        datetime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     db.set(get_id(), msgpack.encode(sent_payload))
 
