@@ -227,7 +227,7 @@ def find_item(item_id: str):
 
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
-    id = get_id()
+    s_id = get_id()
     item_entry: StockValue = get_item_from_db(item_id)
     # update stock, serialize and update database
     item_entry.stock += int(amount)
@@ -240,13 +240,13 @@ def add_stock(item_id: str, amount: int):
     )
 
     pipeline_db.set(item_id, msgpack.encode(item_entry))
-    pipeline_db.set(id.text, log)
+    pipeline_db.set(s_id, log)
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id.text}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {s_id}", status=200)
 
 
 @app.post('/subtract/<item_id>/<amount>')
@@ -266,13 +266,13 @@ def remove_stock(item_id: str, amount: int):
     if item_entry.stock < 0:
         abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
     pipeline_db.set(item_id, msgpack.encode(item_entry))
-    pipeline_db.set(id.text, log)
+    pipeline_db.set(id, log)
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id.text}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id}", status=200)
 
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
