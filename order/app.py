@@ -11,7 +11,7 @@ import redis
 import requests
 
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response, url_for
+from flask import Flask, jsonify, abort, Response, url_for, request
 
 
 DB_ERROR_STR = "DB error"
@@ -67,8 +67,9 @@ class LogOrderValue(Struct):
 
 
 def send_post_request(url: str):
+    headers = {"referer": request.url}
     try:
-        response = requests.post(url)
+        response = requests.post(url, headers=headers)
     except requests.exceptions.RequestException:
         abort(400, REQ_ERROR_STR)
     else:
@@ -76,10 +77,11 @@ def send_post_request(url: str):
 
 
 def send_get_request(url: str, optional_params: dict[str, str] | None = None):
+    headers = {"referer": request.url}
     optional_params = {} if optional_params is None else optional_params
     url = url_for(url, **optional_params)  # The ** operator unpacks the dictionary into keyword arguments
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers=headers)
     except requests.exceptions.RequestException:
         abort(400, REQ_ERROR_STR)
     else:
@@ -163,33 +165,6 @@ def create_order(user_id: str):
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({'order_id': key, 'log_id': id})
-
-
-# Can Ignore
-@app.post('/batch_init/<n>/<n_items>/<n_users>/<item_price>')
-def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
-    n = int(n)
-    n_items = int(n_items)
-    n_users = int(n_users)
-    item_price = int(item_price)
-
-    def generate_entry() -> OrderValue:
-        user_id = random.randint(0, n_users - 1)
-        item1_id = random.randint(0, n_items - 1)
-        item2_id = random.randint(0, n_items - 1)
-        value = OrderValue(paid=False,
-                           items=[(f"{item1_id}", 1), (f"{item2_id}", 1)],
-                           user_id=f"{user_id}",
-                           total_cost=2*item_price)
-        return value
-
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(generate_entry())
-                                  for i in range(n)}
-    try:
-        db.mset(kv_pairs)
-    except redis.exceptions.RedisError:
-        return abort(400, DB_ERROR_STR)
-    return jsonify({"msg": "Batch init for orders successful"})
 
 
 @app.get('/find/<order_id>')
@@ -435,6 +410,32 @@ def get_id():
         abort(400, REQ_ERROR_STR)
     else:
         return response.text
+
+# Can Ignore
+@app.post('/batch_init/<n>/<n_items>/<n_users>/<item_price>')
+def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
+    n = int(n)
+    n_items = int(n_items)
+    n_users = int(n_users)
+    item_price = int(item_price)
+
+    def generate_entry() -> OrderValue:
+        user_id = random.randint(0, n_users - 1)
+        item1_id = random.randint(0, n_items - 1)
+        item2_id = random.randint(0, n_items - 1)
+        value = OrderValue(paid=False,
+                           items=[(f"{item1_id}", 1), (f"{item2_id}", 1)],
+                           user_id=f"{user_id}",
+                           total_cost=2*item_price)
+        return value
+
+    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(generate_entry())
+                                  for i in range(n)}
+    try:
+        db.mset(kv_pairs)
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    return jsonify({"msg": "Batch init for orders successful"})
 
 
 if __name__ == '__main__':
