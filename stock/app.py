@@ -423,7 +423,7 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
 def find_all_logs_time(number: int):
     try:
         # Calculate the range
-        lower_bound = number - 2
+        lower_bound = number - 6
         upper_bound = number
 
         # Create a broad pattern to fetch all potential keys
@@ -451,13 +451,13 @@ def find_all_logs_time(number: int):
     
     
 def fix_consistency():
-    time = int(datetime.now().strftime("%Y%m%d%H%M%S%f")[:-7]) 
+    time = int(datetime.now().strftime("%Y%m%d%H%M%S%f")[:-8]) 
     logs = find_all_logs_time(time)
     app.logger.debug(logs)
     app.logger.debug(time)
     
 scheduler = BackgroundScheduler()
-scheduler.add_job(fix_consistency, 'interval', seconds=10)
+scheduler.add_job(fix_consistency, 'interval', seconds=500)
 scheduler.start()
 
 atexit.register(lambda: scheduler.shutdown())
