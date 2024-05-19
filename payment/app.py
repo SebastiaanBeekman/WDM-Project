@@ -342,7 +342,7 @@ def remove_credit(user_id: str, amount: int):
             id=log_id, 
             type=LogType.SENT,
             status=LogStatus.FAILURE,
-            old_uservalue=old_user,
+            old_uservalue=old_user_entry,
             new_uservalue=user_entry,
             user_id = user_id,
             from_url = request.url,

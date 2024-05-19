@@ -81,7 +81,8 @@ def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | No
             from_url=request.url,
             to_url=request.referrer,
             status=LogStatus.FAILURE,
-            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
         db.set(log_key, msgpack.encode(error_payload))
         return abort(400, f"Item: {item_id} not found! Log key: {log_key}")
     return entry
