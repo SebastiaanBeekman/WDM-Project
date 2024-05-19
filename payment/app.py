@@ -73,8 +73,10 @@ def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | Non
     entry: UserValue | None = msgpack.decode(entry, type=UserValue) if entry else None
     if entry is None:
         log_send = LogUserValue(id=log_id if log_id else str(uuid.uuid4()), type=LogType.SENT, status=LogStatus.FAILURE, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+        log_key = get_key()
+        db.set(log_key, msgpack.encode(log_send))
         # if user does not exist in the database; abort
-        abort(400, f"User: {user_id} not found!")
+        abort(400, f"User: {user_id} not found!, log_key: {log_key}")
     return entry
 
 
