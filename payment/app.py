@@ -4,11 +4,12 @@ import atexit
 import uuid
 import requests
 from datetime import datetime
+from enum import Enum
 
 import redis
 
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response
+from flask import Flask, jsonify, abort, Response, request
 
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
@@ -34,12 +35,33 @@ atexit.register(close_db_connection)
 class UserValue(Struct):
     credit: int
     
-    
+
+class LogType(str, Enum):
+    CREATE = "Create"
+    UPDATE = "Update"
+    DELETE = "Delete"
+    SENT = "Sent"
+    RECEIVED = "Received"
+
+
+class LogStatus(str, Enum):
+    PENDING = "Pending"
+    SUCCESS = "Success"
+    FAILURE = "Failure"
+
+
 class LogUserValue(Struct):
     key: str
-    uservalue: UserValue
     dateTime: str
-
+    type: LogType | None = None 
+    status: LogStatus | None = None
+    user_id: str | None = None
+    old_uservalue: UserValue | None = None
+    new_uservalue: UserValue | None = None
+    from_url: str | None = None
+    to_url: str | None = None
+    
+    
 
 def get_user_from_db(user_id: str) -> UserValue | None:
     try:
@@ -55,6 +77,28 @@ def get_user_from_db(user_id: str) -> UserValue | None:
     return entry
 
 
+def format_log_entry(log_entry: LogUserValue) -> dict:
+    return {
+        "key": log_entry.key,
+        "type": log_entry.type,
+        "status": log_entry.status,
+        "user_id": log_entry.user_id,
+        "uservalue": {
+            "old": {
+                "credit": log_entry.old_uservalue.credit
+            },
+            "new": {
+                "credit": log_entry.new_uservalue.credit
+            }
+        },
+        "url": {
+            "from": log_entry.from_url,
+            "to": log_entry.to_url
+        },
+        "dateTime": log_entry.dateTime
+    }
+    
+
 def get_log_from_db(log_id: str) -> LogUserValue | None:
     # get serialized data
     try:
@@ -67,6 +111,13 @@ def get_log_from_db(log_id: str) -> LogUserValue | None:
     return entry
 
 
+@app.get('/log/<log_id>')
+def find_log(log_id: str):
+    log_entry: LogUserValue = get_log_from_db(log_id)
+    formatted_log = format_log_entry(log_entry)
+    return jsonify(formatted_log)
+
+
 @app.get('/logs')
 def get_all_logs():
     try:
@@ -74,7 +125,7 @@ def get_all_logs():
         log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
         
         # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
+        logs = [{"id": key, "log": format_log_entry(msgpack.decode(db.get(key), type=LogUserValue))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
@@ -98,19 +149,33 @@ def get_all_logs_from(number: int):
 
 @app.post('/create_user')
 def create_user():
-    key = str(uuid.uuid4())
+    user_id = str(uuid.uuid4())
+    log_id = str(uuid.uuid4())
+    
+    # create log entry for the received request
+    recv_log = LogUserValue(key=log_id, type=LogType.RECEIVED, status=LogStatus.PENDING, from_url = request.referrer, to_url = request.url, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(recv_log))
+    
     uservalue = UserValue(credit=0)
     value = msgpack.encode(uservalue)
-    id = get_id()
-    log = msgpack.encode(LogUserValue(key=key, uservalue=uservalue, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
-    pipeline_db.set(key, value)
-    pipeline_db.set(id.text, log)
+    
+    # create log entry for the created user
+    log = LogUserValue(key=log_id, type=LogType.CREATE, new_uservalue=uservalue, user_id = user_id, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    
+    # update database
+    pipeline_db.set(log_id, msgpack.encode(log))
+    pipeline_db.set(user_id, value)
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
-    return jsonify({'user_id': key, 'log_id': id.text})
+    
+    # create log entry for the sent response
+    send_log = LogUserValue(key=log_id, type=LogType.SENT, status=LogStatus.SUCCESS, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(send_log))
+    
+    return jsonify({'user_id': user_id, 'log_id': log_id})
 
 
 @app.post('/batch_init/<n>/<starting_money>')
@@ -129,7 +194,20 @@ def batch_init_users(n: int, starting_money: int):
 
 @app.get('/find_user/<user_id>')
 def find_user(user_id: str):
+    log_id: str | None = request.args.get('log_id')
+    log_id = log_id if log_id else str(uuid.uuid4())
+    
+    # create log entry for the received request
+    recv_log = LogUserValue(key=log_id, type=LogType.RECEIVED, status=LogStatus.PENDING, user_id = user_id, from_url = request.referrer, to_url = request.url, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(recv_log))
+    
+    # get user from database
     user_entry: UserValue = get_user_from_db(user_id)
+    
+    # Create log entry for the sent response
+    sent_log = LogUserValue(key=log_id, type=LogType.SENT, status=LogStatus.SUCCESS, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(sent_log))
+    
     return jsonify(
         {
             "user_id": user_id,
@@ -137,53 +215,76 @@ def find_user(user_id: str):
         }
     )
     
-@app.get('/log/<log_id>')
-def find_log(log_id: str):
-    log_entry: LogUserValue = get_log_from_db(log_id)
-    return jsonify(
-        {
-            "key": log_entry.key,
-            "credit": log_entry.uservalue.credit,
-            "dateTime": log_entry.dateTime
-        }
-    )
-
 
 @app.post('/add_funds/<user_id>/<amount>')
 def add_credit(user_id: str, amount: int):
-    id = get_id()
+    log_id: str | None = request.args.get('log_id')
+    log_id = log_id if log_id else str(uuid.uuid4())
+    
+    # create log entry for the received request
+    recv_log = LogUserValue(key=log_id, type=LogType.RECEIVED, status=LogStatus.PENDING, user_id = user_id, from_url = request.referrer, to_url = request.url, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(recv_log))
+    
     user_entry: UserValue = get_user_from_db(user_id)
+    old_user = user_entry.copy()
     # update credit, serialize and update database
     user_entry.credit += int(amount)
-    log = msgpack.encode(LogUserValue(key=user_id, uservalue=user_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    
+    # create log entry for the updated user
+    log = LogUserValue(key=log_id, type=LogType.UPDATE, old_uservalue=old_user, new_uservalue=user_entry, user_id = user_id, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    
+    # update database
     pipeline_db.set(user_id, msgpack.encode(user_entry))
-    pipeline_db.set(id.text, log)
+    pipeline_db.set(get_id(), msgpack.encode(log))
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
+    
+    # create log entry for the sent response
+    send_log = LogUserValue(key=log_id, type=LogType.SENT, status=LogStatus.SUCCESS, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(send_log))
+    
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}, log_id: {id.text}", status=200)
 
 
 @app.post('/pay/<user_id>/<amount>')
 def remove_credit(user_id: str, amount: int):
     app.logger.debug(f"Removing {amount} credit from user: {user_id}")
-    id = get_id()
+    log_id: str | None = request.args.get('log_id')
+    log_id = log_id if log_id else str(uuid.uuid4())
+    
+    # create log entry for the received request
+    recv_log = LogUserValue(key=log_id, type=LogType.RECEIVED, status=LogStatus.PENDING, user_id = user_id, from_url = request.referrer, to_url = request.url, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(recv_log))
+    
     user_entry: UserValue = get_user_from_db(user_id)
+    old_user = user_entry.copy()
     # update credit, serialize and update database
     user_entry.credit -= int(amount)
-    log = msgpack.encode(LogUserValue(key=user_id, uservalue=user_entry, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")))
     
     if user_entry.credit < 0:
+        # create log entry for the sent response
+        send_log = LogUserValue(key=log_id, type=LogType.SENT, status=LogStatus.FAILURE, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
         abort(400, f"User: {user_id} credit cannot get reduced below zero!")
+        
+    # create log entry for the updated user
+    log = LogUserValue(key=log_id, type=LogType.UPDATE, old_uservalue = old_user, new_uservalue=user_entry, user_id=user_id, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    
+    # update database
     pipeline_db.set(user_id, msgpack.encode(user_entry))
-    pipeline_db.set(id.text, log)
+    pipeline_db.set(id, msgpack.encode(log))
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
+    
+    # Create log entry for the sent response
+    send_log = LogUserValue(key=log_id, type=LogType.SENT, status=LogStatus.SUCCESS, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    db.set(get_id(), msgpack.encode(send_log))
+    
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}, log_id: {id.text}", status=200)
 
 
@@ -193,7 +294,7 @@ def get_id():
     except requests.exceptions.RequestException:
         abort(400, REQ_ERROR_STR)
     else:
-        return response
+        return response.text
 
 
 if __name__ == '__main__':
