@@ -11,6 +11,7 @@ services:
       - order-service
       - stock-service
       - payment-service
+      - ids-service
 
   order-service:
     build: ./order
@@ -30,6 +31,8 @@ services:
   stock-service:
     build: ./stock
     image: stock:latest
+    environment:
+      - GATEWAY_URL=http://gateway:80
     command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
     env_file:
       - env/stock_redis.env
@@ -43,6 +46,8 @@ services:
   payment-service:
     build: ./payment
     image: user:latest
+    environment:
+      - GATEWAY_URL=http://gateway:80
     command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
     env_file:
       - env/payment_redis.env
@@ -52,3 +57,9 @@ services:
   payment-db:
     image: redis:7.2-bookworm
     command: redis-server --requirepass redis --maxmemory 512mb
+
+  ids-service:
+    build: ./ids
+    image: ids:latest
+    command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
+    

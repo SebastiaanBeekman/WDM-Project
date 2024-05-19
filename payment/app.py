@@ -2,22 +2,29 @@ import logging
 import os
 import atexit
 import uuid
-
+import requests
+from enum import Enum
 import redis
+from copy import deepcopy
 
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response
+from flask import Flask, jsonify, abort, Response, request
+from datetime import datetime
+
 
 DB_ERROR_STR = "DB error"
-
+REQ_ERROR_STR = "Requests error"
+GATEWAY_URL = os.environ['GATEWAY_URL']
 
 app = Flask("payment-service")
 
-db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
-                              port=int(os.environ['REDIS_PORT']),
-                              password=os.environ['REDIS_PASSWORD'],
-                              db=int(os.environ['REDIS_DB']))
-
+db: redis.Redis = redis.Redis(
+    host=os.environ['REDIS_HOST'],
+    port=int(os.environ['REDIS_PORT']),
+    password=os.environ['REDIS_PASSWORD'],
+    db=int(os.environ['REDIS_DB'])
+)
+pipeline_db = db.pipeline()
 
 def close_db_connection():
     db.close()
@@ -28,35 +35,373 @@ atexit.register(close_db_connection)
 
 class UserValue(Struct):
     credit: int
+    
+
+class LogType(str, Enum):
+    CREATE      = "Create"
+    UPDATE      = "Update"
+    DELETE      = "Delete"
+    SENT        = "Sent"
+    RECEIVED    = "Received"
 
 
-def get_user_from_db(user_id: str) -> UserValue | None:
+class LogStatus(str, Enum):
+    PENDING = "Pending"
+    SUCCESS = "Success"
+    FAILURE = "Failure"
+
+
+class LogUserValue(Struct):
+    id: str
+    dateTime: str
+    type: LogType | None = None 
+    status: LogStatus | None = None
+    user_id: str | None = None
+    old_uservalue: UserValue | None = None
+    new_uservalue: UserValue | None = None
+    from_url: str | None = None
+    to_url: str | None = None
+    
+
+def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | None:
     try:
-        # get serialized data
         entry: bytes = db.get(user_id)
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    # deserialize data if it exists else return null
+
     entry: UserValue | None = msgpack.decode(entry, type=UserValue) if entry else None
+    
     if entry is None:
-        # if user does not exist in the database; abort
-        abort(400, f"User: {user_id} not found!")
+        log_key = get_key()
+        error_payload = LogUserValue(
+            id=log_id if log_id else str(uuid.uuid4()), 
+            type=LogType.SENT, 
+            user_id = user_id, 
+            from_url = request.url, 
+            to_url = request.referrer,
+            status=LogStatus.FAILURE, 
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        db.set(log_key, msgpack.encode(error_payload))
+        abort(400, f"User: {user_id} not found! Log key: {log_key}")
+    return entry
+
+### START OF LOG FUNCTIONS ###
+def format_log_entry(log_entry: LogUserValue) -> dict:
+    return {
+        "id": log_entry.id,
+        "type": log_entry.type,
+        "status": log_entry.status,
+        "user_id": log_entry.user_id,
+        "userValue": {
+            "old": {
+                "credit": log_entry.old_uservalue.credit if log_entry.old_uservalue else None
+            },
+            "new": {
+                "credit": log_entry.new_uservalue.credit if log_entry.new_uservalue else None
+            }
+        },
+        "url": {
+            "from": log_entry.from_url,
+            "to": log_entry.to_url
+        },
+        "dateTime": log_entry.dateTime
+    }
+    
+
+def get_log_from_db(log_key: str) -> LogUserValue | None:
+    try:
+        entry: bytes = db.get(log_key)
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    
+    entry: LogUserValue | None = msgpack.decode(entry, type=LogUserValue) if entry else None
+    
+    if entry is None:
+        abort(400, f"Log: {log_key} not found!")
     return entry
 
 
+@app.get('/log/<log_key>')
+def find_log(log_key: str):
+    log_entry: LogUserValue = get_log_from_db(log_key)
+    formatted_log = format_log_entry(log_entry)
+    return jsonify(formatted_log), 200
+
+
+@app.get('/logs')
+def find_all_logs():
+    try:
+        # Retrieve all keys starting with "log:" from Redis
+        log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
+        
+        # Retrieve values corresponding to the keys
+        logs = [{"key": key, "log": format_log_entry(msgpack.decode(db.get(key), type=LogUserValue))} for key in log_keys]
+
+        return jsonify({'logs': logs}), 200
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+    
+
+@app.get('/logs_from/<number>')
+def find_all_logs_from(number: int):
+    """This function is still broken."""
+    try:
+        # Retrieve all keys starting with "log:" from Redis
+        log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
+        
+        # Retrieve values corresponding to the keys
+        logs = [{"key": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
+
+        return jsonify({'logs': logs}), 200
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+### END OF LOG FUNCTIONS ###
+
 @app.post('/create_user')
 def create_user():
-    key = str(uuid.uuid4())
-    value = msgpack.encode(UserValue(credit=0))
+    log_id = str(uuid.uuid4())
+    
+    # create log entry for the received request
+    received_payload_from_user = LogUserValue(
+        id=log_id, 
+        type=LogType.RECEIVED, 
+        from_url = request.referrer,    # Endpoint that called this
+        to_url = request.url,           # This endpoint
+        status=LogStatus.PENDING, 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    
+    user_id = str(uuid.uuid4())
+    user_value = UserValue(credit=0)
+    
+    # Create a log entry for the create request
+    create_payload = LogUserValue(
+        id=log_id, 
+        type=LogType.CREATE, 
+        user_id = user_id, 
+        new_uservalue=user_value, 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    
+    # Set the log entry and the updated item in the pipeline
+    log_key = get_key()
+    pipeline_db.set(log_key, msgpack.encode(create_payload))
+    pipeline_db.set(user_id, msgpack.encode(user_value))
     try:
-        db.set(key, value)
+        pipeline_db.execute()
+        app.logger.debug(f"User: {user_id} with credit: {user_value.credit} created")
     except redis.exceptions.RedisError:
+        pipeline_db.discard()
+        app.logger.error("User: {user_id} failed to create")
         return abort(400, DB_ERROR_STR)
-    return jsonify({'user_id': key})
+    
+    # create log entry for the sent response
+    sent_payload_to_user = LogUserValue(
+        id=log_id, 
+        type=LogType.SENT, 
+        from_url = request.url,     # This endpoint
+        to_url = request.referrer,  # Endpoint that called this
+        user_id = user_id, 
+        status=LogStatus.SUCCESS, 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
+    
+    return jsonify({'user_id': user_id, 'log_key': log_key}), 200
+
+
+@app.get('/find_user/<user_id>')
+def find_user(user_id: str):
+    log_id: str | None = request.args.get('log_id')
+    log_id = log_id if log_id else str(uuid.uuid4())
+    
+    # create log entry for the received request from the user
+    received_payload_from_user = LogUserValue(
+        id=log_id, 
+        type=LogType.RECEIVED, 
+        from_url = request.referrer,    # Endpoint that called this
+        to_url = request.url,           # This endpoint
+        user_id = user_id, 
+        status=LogStatus.PENDING, 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    
+    # Retrieve user from the database
+    user_entry: UserValue = get_user_from_db(user_id)
+    
+    # Create log entry for the sent response
+    sent_payload_to_user = LogUserValue(
+        id=log_id, 
+        type=LogType.SENT, 
+        from_url = request.url, 
+        to_url = request.referrer, 
+        user_id = user_id, 
+        status=LogStatus.SUCCESS, 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
+    
+    # Return the user information
+    return jsonify(
+        {
+            "user_id": user_id,
+            "credit": user_entry.credit
+        }
+    )
+    
+
+@app.post('/add_funds/<user_id>/<amount>')
+def add_credit(user_id: str, amount: int):
+    log_id: str | None = request.args.get('log_id')
+    log_id = log_id if log_id else str(uuid.uuid4())
+    
+    # Create a log entry for the receieved request from the user
+    received_payload_from_user = LogUserValue(
+        id=log_id, 
+        type=LogType.RECEIVED,
+        status=LogStatus.PENDING,
+        user_id = user_id,
+        from_url = request.referrer,
+        to_url = request.url,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    
+    user_entry: UserValue = get_user_from_db(user_id)
+    old_user_entry: UserValue = deepcopy(user_entry)
+    
+    # Update credit
+    user_entry.credit += int(amount)
+    
+    # Create a log entry for the updated user
+    update_payload = LogUserValue(
+        id=log_id, 
+        type=LogType.UPDATE,
+        user_id = user_id,
+        old_uservalue=old_user_entry,
+        new_uservalue=user_entry,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    
+    # update database
+    log_key = get_key()
+    pipeline_db.set(log_key, msgpack.encode(update_payload))
+    pipeline_db.set(user_id, msgpack.encode(user_entry))
+    try:
+        pipeline_db.execute()
+    except redis.exceptions.RedisError:
+        pipeline_db.discard()
+        app.logger.error(f"User: {user_id} failed to update")
+        return abort(400, DB_ERROR_STR)
+    
+    # create log entry for the sent response
+    sent_payload_to_user = LogUserValue(
+        id=log_id, 
+        type=LogType.SENT, 
+        from_url = request.url,     # This endpoint
+        to_url = request.referrer,  # Endpoint that called this
+        user_id = user_id,
+        status=LogStatus.SUCCESS, 
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
+    
+    return Response(f"User: {user_id} credit updated to: {user_entry.credit}, log_key: {log_key}", status=200)
+
+
+@app.post('/pay/<user_id>/<amount>')
+def remove_credit(user_id: str, amount: int):
+    app.logger.debug(f"Removing {amount} credit from user: {user_id}")
+    log_id: str | None = request.args.get('log_id')
+    log_id = log_id if log_id else str(uuid.uuid4())
+    
+    # create log entry for the received request
+    received_payload_from_user = LogUserValue(
+        id=log_id, 
+        type=LogType.RECEIVED,
+        from_url = request.referrer,    # Endpoint that called this
+        to_url = request.url,           # This endpoint
+        user_id = user_id,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    
+    user_entry: UserValue = get_user_from_db(user_id)
+    old_user_entry: UserValue = deepcopy(user_entry)
+    
+    # Update credit
+    user_entry.credit -= int(amount)
+    
+    if user_entry.credit < 0:
+        # create log entry for the error
+        send_log = LogUserValue(
+            id=log_id, 
+            type=LogType.SENT,
+            status=LogStatus.FAILURE,
+            old_uservalue=old_user_entry,
+            new_uservalue=user_entry,
+            user_id = user_id,
+            from_url = request.url,
+            to_url = request.referrer,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        log_key = get_key()
+        db.set(log_key, msgpack.encode(send_log))
+        abort(400, f"User: {user_id} credit cannot get reduced below zero! Log key: {log_key}")
+        
+    # create log entry for the updated user
+    update_payload = LogUserValue(
+        id=log_id, 
+        type=LogType.UPDATE,
+        user_id=user_id,
+        old_uservalue = old_user_entry,
+        new_uservalue=user_entry,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    
+    # Set the log entry and the updated item in the pipeline
+    log_key = get_key()
+    pipeline_db.set(log_key, msgpack.encode(update_payload))
+    pipeline_db.set(user_id, msgpack.encode(user_entry))
+    try:
+        pipeline_db.execute()
+        app.logger.debug(f"User: {user_id} with credit: {user_entry.credit} updated")
+    except redis.exceptions.RedisError:
+        pipeline_db.discard()
+        app.logger.error(f"User: {user_id} failed to update")
+        return abort(400, DB_ERROR_STR)
+    
+    # Create log entry for the sent response
+    sent_payload_to_user = LogUserValue(
+        id=log_id, 
+        type=LogType.SENT,
+        from_url = request.url,     # This endpoint
+        to_url = request.referrer,  # Endpoint that called this
+        user_id = user_id,
+        status=LogStatus.SUCCESS,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
+    
+    return Response(f"User: {user_id} credit updated to: {user_entry.credit}, log_key: {log_key}", status=200)
+
+
+def get_key():
+    try:
+        response = requests.get(f"{GATEWAY_URL}/ids/create")
+    except requests.exceptions.RequestException:
+        abort(400, REQ_ERROR_STR)
+    else:
+        return response.text
 
 
 @app.post('/batch_init/<n>/<starting_money>')
 def batch_init_users(n: int, starting_money: int):
+    """This function apparenlty boeit niet."""
     n = int(n)
     starting_money = int(starting_money)
     kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money))
@@ -66,44 +411,6 @@ def batch_init_users(n: int, starting_money: int):
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for users successful"})
-
-
-@app.get('/find_user/<user_id>')
-def find_user(user_id: str):
-    user_entry: UserValue = get_user_from_db(user_id)
-    return jsonify(
-        {
-            "user_id": user_id,
-            "credit": user_entry.credit
-        }
-    )
-
-
-@app.post('/add_funds/<user_id>/<amount>')
-def add_credit(user_id: str, amount: int):
-    user_entry: UserValue = get_user_from_db(user_id)
-    # update credit, serialize and update database
-    user_entry.credit += int(amount)
-    try:
-        db.set(user_id, msgpack.encode(user_entry))
-    except redis.exceptions.RedisError:
-        return abort(400, DB_ERROR_STR)
-    return Response(f"User: {user_id} credit updated to: {user_entry.credit}", status=200)
-
-
-@app.post('/pay/<user_id>/<amount>')
-def remove_credit(user_id: str, amount: int):
-    app.logger.debug(f"Removing {amount} credit from user: {user_id}")
-    user_entry: UserValue = get_user_from_db(user_id)
-    # update credit, serialize and update database
-    user_entry.credit -= int(amount)
-    if user_entry.credit < 0:
-        abort(400, f"User: {user_id} credit cannot get reduced below zero!")
-    try:
-        db.set(user_id, msgpack.encode(user_entry))
-    except redis.exceptions.RedisError:
-        return abort(400, DB_ERROR_STR)
-    return Response(f"User: {user_id} credit updated to: {user_entry.credit}", status=200)
 
 
 if __name__ == '__main__':
