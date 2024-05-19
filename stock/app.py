@@ -71,7 +71,7 @@ def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | No
     try:
         entry: bytes = db.get(item_id)
     except redis.exceptions.RedisError:
-        return abort(400, DB_ERROR_STR)
+        return abort(451, DB_ERROR_STR)
 
     entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
 
@@ -201,7 +201,7 @@ def create_item(price: int):
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         app.logger.debug(f"Item: {item_id} failed to create")
-        return abort(400, DB_ERROR_STR)
+        return abort(452, DB_ERROR_STR)
 
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
@@ -301,7 +301,7 @@ def add_stock(item_id: str, amount: int):
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         app.logger.debug(f"Item: {item_id} failed to update")
-        return abort(400, DB_ERROR_STR)
+        return abort(453, DB_ERROR_STR)
     
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
@@ -354,7 +354,7 @@ def remove_stock(item_id: str, amount: int):
         )
         log_key = get_key()
         db.set(log_key, msgpack.encode(error_payload))
-        abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
+        abort(454, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
         
     # Create a log entry for the update request
     update_payload = LogStockValue(
