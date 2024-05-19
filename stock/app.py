@@ -37,18 +37,18 @@ class StockValue(Struct):
     price: int
 
 
-class LogType(Enum):
-    CREATE = 1
-    UPDATE = 2
-    DELETE = 3
-    SENT = 4
-    RECEIVED = 5
+class LogType(str, Enum):
+    CREATE = "Create"
+    UPDATE = "Update"
+    DELETE = "Delete"
+    SENT = "Sent"
+    RECEIVED = "Received"
 
 
-class LogStatus(Enum):
-    PENDING = 1
-    SUCCESS = 2
-    FAILURE = 3
+class LogStatus(str, Enum):
+    PENDING = "Pending"
+    SUCCESS = "Success"
+    FAILURE = "Failure"
 
 
 class LogStockValue(Struct):
@@ -109,32 +109,9 @@ def get_log_from_db(log_id: str) -> LogStockValue | None:
 def find_log(log_id: str):
     log_entry: LogStockValue = get_log_from_db(log_id)
     formatted_log_entry : dict = format_log_entry(log_entry)
-    return jsonify(
-        {
-        "key": log_entry.key,
-        "type": log_entry.type,
-        "status": log_entry.status,
-        "stockvalue": {
-            "stock": log_entry.stockvalue.stock if log_entry.stockvalue else None,
-            "price": log_entry.stockvalue.price if log_entry.stockvalue else None
-        },
-        "url": log_entry.url,
-        "dateTime": log_entry.dateTime
-    }
-    )
+    return jsonify(formatted_log_entry)
 
-def format_log_entry(log_entry: LogStockValue):
-    return {
-        "key": log_entry.key,
-        "type": log_entry.type,
-        "status": log_entry.status,
-        "stockvalue": {
-            "stock": log_entry.stockvalue.stock if log_entry.stockvalue else None,
-            "price": log_entry.stockvalue.price if log_entry.stockvalue else None
-        },
-        "url": log_entry.url,
-        "dateTime": log_entry.dateTime
-    }
+
 
 
 @app.get('/logs')
