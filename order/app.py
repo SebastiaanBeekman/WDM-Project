@@ -68,8 +68,9 @@ class LogOrderValue(Struct):
     to_url: str | None = None
 
 
-def send_post_request(url: str):
+def send_post_request(url: str, log_id: str | None = None):
     headers = {"referer": request.url}
+    url += f"?log_id={log_id}" if log_id is not None else ""
     try:
         response = requests.post(url, headers=headers)
     except requests.exceptions.RequestException:
@@ -375,9 +376,31 @@ def add_item(order_id: str, item_id: str, quantity: int):
     return Response(f"Item: {item_id} added to: {order_id} total price updated to: {order_entry.total_cost}, log_id: {log_id}", status=200)
 
 
-def rollback_stock(removed_items: list[tuple[str, int]]):
+def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):    
     for item_id, quantity in removed_items:
-        send_post_request(f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}")
+        url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
+        
+        sent_payload_to_stock = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=url,
+            status=LogStatus.PENDING,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(sent_payload_to_stock))
+        
+        send_post_request(url, log_id)
+        
+        received_payload_from_stock = LogOrderValue(
+            id=log_id,
+            type=LogType.RECEIVED,
+            from_url=url,
+            to_url=request.url,
+            status=LogStatus.SUCCESS,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
 
 @app.post('/checkout/<order_id>')
@@ -396,6 +419,7 @@ def checkout(order_id: str):
     db.set(get_key(), msgpack.encode(received_payload_from_user))
 
     order_entry: OrderValue = get_order_from_db(order_id)
+    old_order_entry = deepcopy(order_entry)
 
     # get the quantity per item
     items_quantities: dict[str, int] = defaultdict(int)
@@ -420,7 +444,7 @@ def checkout(order_id: str):
         db.set(get_key(), msgpack.encode(sent_payload_to_stock))
 
         # actually sending the request
-        stock_reply = send_post_request(request_url)
+        stock_reply = send_post_request(request_url, log_id)
 
         received_payload_from_stock = LogOrderValue(
             id=log_id,
@@ -433,48 +457,76 @@ def checkout(order_id: str):
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
         if stock_reply.status_code != 200:
-            rollback_stock(removed_items)
+            error_payload = LogOrderValue(
+                id=log_id,
+                type=LogType.SENT,
+                from_url=request.url,
+                to_url=request.referrer,
+                status=LogStatus.FAILURE,
+                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            )
+            db.set(get_key(), msgpack.encode(error_payload))
+            
+            rollback_stock(removed_items, log_id)
+            
             abort(400, f'Out of stock on item_id: {item_id}')
         removed_items.append((item_id, quantity))
 
-    # Create a log entry for the sent request
     payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
 
+    # Create a log entry for the sent request
     sent_payload_to_payment = LogOrderValue(
-        key=log_id,
+        id=log_id,
         type=LogType.SENT,
-        url=payment_request_url,
+        from_url=request.url,
+        to_url=payment_request_url,
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_payment))
 
-    payment_reply = send_post_request(payment_request_url)
+    payment_reply = send_post_request(payment_request_url, log_id)
 
     # Create a log entry for the received response (success or failure)
     received_payload_from_payment = LogOrderValue(
-        key=log_id,
+        id=log_id,
         type=LogType.RECEIVED,
-        url=request_url,
+        from_url=payment_request_url,
+        to_url=request.url,
         status=LogStatus.SUCCESS if payment_reply.status_code == 200 else LogStatus.FAILURE,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_key(), msgpack.encode(received_payload_from_payment))
 
     if payment_reply.status_code != 200:
-        # If the user does not have enough credit we need to rollback all the item stock subtractions
-        rollback_stock(removed_items)
-        abort(400, "User out of credit")
-    order_entry.paid = True
-    log = msgpack.encode(
-        LogOrderValue(
-            key=order_id,
-            ordervalue=order_entry,
-            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
+        rollback_stock(removed_items)
+        
+        abort(400, "User out of credit")
+    
+    order_entry.paid = True
+    
+    update_payload = LogOrderValue(
+        id=log_id,
+        type=LogType.UPDATE,
+        order_id=order_id,
+        old_ordervalue=old_order_entry,
+        new_ordervalue=order_entry,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
+    
+    log_key = get_key()
+    pipeline_db.set(log_key, msgpack.encode(update_payload))
     pipeline_db.set(order_id, msgpack.encode(order_entry))
-    pipeline_db.set(user_request_id, log)
 
     try:
         pipeline_db.execute()
@@ -483,17 +535,19 @@ def checkout(order_id: str):
         return abort(400, DB_ERROR_STR)
 
     # Create a log for the sent response
-    sent_payload = LogOrderValue(
-        key=log_id,
+    sent_payload_to_user = LogOrderValue(
+        id=log_id,
         type=LogType.SENT,
-        url=url,
+        from_url=request.url,
+        to_url=request.referrer,
+        order_id=order_id,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
-    db.set(get_key(), msgpack.encode(sent_payload))
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
     app.logger.debug("Checkout successful")
-    return Response(f"Checkout successful, log: {user_request_id}", status=200)
+    return Response(f"Checkout successful, log: {log_key}", status=200)
 
 
 def get_key():
