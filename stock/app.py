@@ -79,6 +79,19 @@ def get_item_from_db(item_id: str, log_id: str | None = None, url: str | None = 
         return abort(400, f"Item: {item_id} not found!")
     return entry
 
+### START OF LOG FUNCTIONS ###
+def format_log_entry(log_entry: LogStockValue) -> dict:
+    return {
+        "key": log_entry.key,
+        "type": log_entry.type,
+        "status": log_entry.status,
+        "stockvalue": {
+            "stock": log_entry.stockvalue.stock if log_entry.stockvalue else None,
+            "price": log_entry.stockvalue.price if log_entry.stockvalue else None
+        },
+        "url": log_entry.url,
+        "dateTime": log_entry.dateTime
+    }
 
 def get_log_from_db(log_id: str) -> LogStockValue | None:
     # get serialized data
@@ -95,24 +108,43 @@ def get_log_from_db(log_id: str) -> LogStockValue | None:
 @app.get('/log/<log_id>')
 def find_log(log_id: str):
     log_entry: LogStockValue = get_log_from_db(log_id)
+    formatted_log_entry : dict = format_log_entry(log_entry)
     return jsonify(
         {
-            "key": log_entry.key,
-            "stock": log_entry.stockvalue.stock,
-            "price": log_entry.stockvalue.price,
-            "dateTime": log_entry.dateTime
-        }
+        "key": log_entry.key,
+        "type": log_entry.type,
+        "status": log_entry.status,
+        "stockvalue": {
+            "stock": log_entry.stockvalue.stock if log_entry.stockvalue else None,
+            "price": log_entry.stockvalue.price if log_entry.stockvalue else None
+        },
+        "url": log_entry.url,
+        "dateTime": log_entry.dateTime
+    }
     )
+
+def format_log_entry(log_entry: LogStockValue):
+    return {
+        "key": log_entry.key,
+        "type": log_entry.type,
+        "status": log_entry.status,
+        "stockvalue": {
+            "stock": log_entry.stockvalue.stock if log_entry.stockvalue else None,
+            "price": log_entry.stockvalue.price if log_entry.stockvalue else None
+        },
+        "url": log_entry.url,
+        "dateTime": log_entry.dateTime
+    }
 
 
 @app.get('/logs')
-def get_all_logs():
+def find_all_logs():
     try:
         # Retrieve all keys starting with "log:" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
 
         # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
+        logs = [{"p_key": key, "log": find_log(key)} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
@@ -120,10 +152,10 @@ def get_all_logs():
 
 
 @app.get('/logs_from/<number>')
-def get_all_logs_from(number: int):
+def find_all_logs_from(number: int):
     """This function is still broken."""
 
-    log_id = request.args.get('log_id')
+    # log_id = request.args.get('log_id')
 
     try:
         # Retrieve all keys starting with "log:[number]" from Redis
@@ -136,6 +168,7 @@ def get_all_logs_from(number: int):
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
 
+### END OF LOG FUNCTIONS ###
 
 @app.post('/item/create/<price>')
 def create_item(price: int):
@@ -143,14 +176,14 @@ def create_item(price: int):
     url = f"/item/create/{price}"
 
     # Create a log entry for the receieved request
-    received_payload = LogStockValue(
+    received_payload_from_user = LogStockValue(
         key=log_id,
         type=LogType.RECEIVED,
         url=url,
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(received_payload))
+    db.set(get_id(), msgpack.encode(received_payload_from_user))
 
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
@@ -176,14 +209,14 @@ def create_item(price: int):
         app.logger.debug(f"Item: {item_id} failed to create")
         return abort(400, DB_ERROR_STR)
 
-    sent_payload = LogStockValue(
+    sent_payload_to_user = LogStockValue(
         key=log_id,
         type=LogType.SENT,
         url=url,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(sent_payload))
+    db.set(get_id(), msgpack.encode(sent_payload_to_user))
 
     return jsonify({'item_id': item_id, 'log': log_key})
 

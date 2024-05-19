@@ -76,8 +76,7 @@ def send_post_request(url: str):
 
 
 def send_get_request(url: str, optional_params: dict[str, str] | None = None):
-    if optional_params is None:
-        optional_params = {}
+    optional_params = {} if optional_params is None else optional_params
     url = url_for(url, **optional_params)  # The ** operator unpacks the dictionary into keyword arguments
     try:
         response = requests.get(url)
