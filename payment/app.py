@@ -269,7 +269,7 @@ def remove_credit(user_id: str, amount: int):
     
     if user_entry.credit < 0:
         # create log entry for the sent response
-        send_log = LogUserValue(id=log_id, type=LogType.SENT, status=LogStatus.FAILURE, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
+        send_log = LogUserValue(id=log_id, type=LogType.SENT, status=LogStatus.FAILURE, old_uservalue=old_user, new_uservalue=user_entry, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
         log_key = get_key()
         db.set(log_key, msgpack.encode(send_log))
         abort(400, f"User: {user_id} credit cannot get reduced below zero!, log_key: {log_key}")
