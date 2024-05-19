@@ -88,16 +88,20 @@ def format_log_entry(log_entry: LogStockValue) -> dict:
         "type": log_entry.type,
         "status": log_entry.status,
         "stock_id": log_entry.stock_id,
-        "old_stockvalue": {
-            "stock": log_entry.old_stockvalue.stock if log_entry.old_stockvalue else None,
-            "price": log_entry.old_stockvalue.price if log_entry.old_stockvalue else None
+        "stockvalue:": {
+            "old": {
+                "stock": log_entry.old_stockvalue.stock if log_entry.old_stockvalue else None,
+                "price": log_entry.old_stockvalue.price if log_entry.old_stockvalue else None
+            },
+            "new": {
+                "stock": log_entry.new_stockvalue.stock if log_entry.new_stockvalue else None,
+                "price": log_entry.new_stockvalue.price if log_entry.new_stockvalue else None
+            }
         },
-        "new_stockvalue": {
-            "stock": log_entry.new_stockvalue.stock if log_entry.new_stockvalue else None,
-            "price": log_entry.new_stockvalue.price if log_entry.new_stockvalue else None
+        "url": {
+            "from": log_entry.from_url,
+            "to": log_entry.to_url
         },
-        "from_url": log_entry.from_url,
-        "to_url": log_entry.to_url,
         "dateTime": log_entry.dateTime
     }
 
