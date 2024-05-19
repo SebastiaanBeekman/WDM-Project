@@ -6,9 +6,11 @@ import requests
 from enum import Enum
 import redis
 from copy import deepcopy
+import re
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
+from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
 
 
@@ -61,7 +63,8 @@ class LogStockValue(Struct):
     old_stockvalue: StockValue | None = None
     new_stockvalue: StockValue | None = None
     from_url: str | None = None
-    to_url: str | None = None
+    to_url: str | None = None    
+
 
 
 def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | None:
@@ -154,7 +157,7 @@ def find_all_logs_from(number: int):
         log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
 
         # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": format_log_entry(msgpack.decode(db.get(key)), type=LogStockValue)} for key in log_keys]
+        logs = [{"id": key, "log": format_log_entry(msgpack.decode(db.get(key), type=LogStockValue))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
@@ -416,6 +419,49 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
 
+  
+def find_all_logs_time(number: int):
+    try:
+        # Calculate the range
+        lower_bound = number - 2
+        upper_bound = number
+
+        # Create a broad pattern to fetch all potential keys
+        broad_pattern = "log:*"
+        # Retrieve all keys matching the broad pattern
+        potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
+
+        # Create a regex pattern to filter the keys within the desired range
+        pattern = re.compile(f"log:({lower_bound}|{lower_bound+1}|{upper_bound}).*")
+
+        # Filter keys based on the regex pattern
+        log_keys = [key for key in potential_keys if pattern.match(key)]
+
+        # Retrieve values corresponding to the keys
+        logs = []
+        for key in log_keys:
+            raw_data = db.get(key)
+            if raw_data:
+                log_entry = msgpack.decode(raw_data, type=LogStockValue)
+                logs.append({"id": key, "log": format_log_entry(log_entry)})
+
+        return logs
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+    
+    
+def fix_consistency():
+    time = int(datetime.now().strftime("%Y%m%d%H%M%S%f")[:-7]) 
+    logs = find_all_logs_time(time)
+    app.logger.debug(logs)
+    app.logger.debug(time)
+    
+scheduler = BackgroundScheduler()
+scheduler.add_job(fix_consistency, 'interval', seconds=10)
+scheduler.start()
+
+atexit.register(lambda: scheduler.shutdown())
+
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
@@ -423,4 +469,5 @@ else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
-    # app.logger.setLevel(logging.DEBUG)
+    app.logger.setLevel(logging.DEBUG)
+    
