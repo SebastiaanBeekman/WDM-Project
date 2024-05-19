@@ -1,5 +1,5 @@
 # Work In Progress
-We've not been able to fully implement consistency yet. We have implemented logging in every functionality to help with reaching eventual consistency, but still struggle with understanding how to fix inconsistencies. We will continue working on it but would appreciate some feedback and/or guidance on how to continue.
+**We've not been able to fully implement consistency yet. We have implemented logging in every functionality to help with reaching eventual consistency, but still struggle with understanding how to fix inconsistencies. We will continue working on it but would appreciate some feedback and/or guidance on how to continue.**
 
 # Web-scale Data Management Project Template
 
