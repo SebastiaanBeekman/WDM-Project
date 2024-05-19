@@ -63,7 +63,7 @@ class LogUserValue(Struct):
     
     
 
-def get_user_from_db(user_id: str) -> UserValue | None:
+def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | None:
     try:
         # get serialized data
         entry: bytes = db.get(user_id)
@@ -72,6 +72,7 @@ def get_user_from_db(user_id: str) -> UserValue | None:
     # deserialize data if it exists else return null
     entry: UserValue | None = msgpack.decode(entry, type=UserValue) if entry else None
     if entry is None:
+        log_send = LogUserValue(id=log_id if log_id else str(uuid.uuid4()), type=LogType.SENT, status=LogStatus.FAILURE, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
         # if user does not exist in the database; abort
         abort(400, f"User: {user_id} not found!")
     return entry
@@ -85,10 +86,10 @@ def format_log_entry(log_entry: LogUserValue) -> dict:
         "user_id": log_entry.user_id,
         "uservalue": {
             "old": {
-                "credit": log_entry.old_uservalue.credit
+                "credit": log_entry.old_uservalue.credit if log_entry.old_uservalue else None
             },
             "new": {
-                "credit": log_entry.new_uservalue.credit
+                "credit": log_entry.new_uservalue.credit if log_entry.new_uservalue else None
             }
         },
         "url": {
