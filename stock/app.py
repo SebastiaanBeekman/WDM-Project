@@ -153,7 +153,7 @@ def find_all_logs_from(number: int):
         log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
 
         # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": format_log_entry(msgpack.decode(db.get(key)), type=LogStockValue)} for key in log_keys]
+        logs = [{"id": key, "log": format_log_entry(msgpack.decode(db.get(key), type=LogStockValue))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
