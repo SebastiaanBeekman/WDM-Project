@@ -79,7 +79,7 @@ def get_user_from_db(user_id: str) -> UserValue | None:
 
 def format_log_entry(log_entry: LogUserValue) -> dict:
     return {
-        "id": log_entry.key,
+        "id": log_entry.id,
         "type": log_entry.type,
         "status": log_entry.status,
         "user_id": log_entry.user_id,
@@ -269,8 +269,9 @@ def remove_credit(user_id: str, amount: int):
     if user_entry.credit < 0:
         # create log entry for the sent response
         send_log = LogUserValue(id=log_id, type=LogType.SENT, status=LogStatus.FAILURE, user_id = user_id, from_url = request.url, to_url = request.referrer, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
-        db.set(get_key(), msgpack.encode(send_log))
-        abort(400, f"User: {user_id} credit cannot get reduced below zero!")
+        log_key = get_key()
+        db.set(log_key, msgpack.encode(send_log))
+        abort(400, f"User: {user_id} credit cannot get reduced below zero!, log_key: {log_key}")
         
     # create log entry for the updated user
     log = LogUserValue(id=log_id, type=LogType.UPDATE, old_uservalue = old_user, new_uservalue=user_entry, user_id=user_id, dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
