@@ -73,15 +73,17 @@ def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | No
     entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
 
     if entry is None:
+        log_key = get_key()
         error_payload = LogStockValue(
             id=log_id if log_id else str(uuid.uuid4()),
             type=LogType.SENT,
-            old_stockvalue=entry,
             stock_id=item_id,
+            from_url=request.url,
+            to_url=request.referrer,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
-        db.set(get_key(), msgpack.encode(error_payload))
-        return abort(400, f"Item: {item_id} not found!")
+        db.set(log_key, msgpack.encode(error_payload))
+        return abort(400, f"Item: {item_id} not found! Log key: {log_key}")
     return entry
 
 ### START OF LOG FUNCTIONS ###
@@ -110,12 +112,13 @@ def format_log_entry(log_entry: LogStockValue) -> dict:
 
 
 def get_log_from_db(log_id: str) -> LogStockValue | None:
-    # get serialized data
     try:
         entry: bytes = db.get(log_id)
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
+    
     entry: LogStockValue | None = msgpack.decode(entry, type=LogStockValue) if entry else None
+    
     if entry is None:
         abort(400, f"Log: {log_id} not found!")
     return entry
@@ -145,9 +148,6 @@ def find_all_logs():
 @app.get('/logs_from/<number>')
 def find_all_logs_from(number: int):
     """This function is still broken."""
-
-    # log_id = request.args.get('log_id')
-
     try:
         # Retrieve all keys starting with "log:[number]" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
@@ -275,6 +275,7 @@ def add_stock(item_id: str, amount: int):
     item_entry: StockValue = get_item_from_db(item_id)
     old_item_entry: StockValue = deepcopy(item_entry)
     
+    # Update the stock value
     item_entry.stock += int(amount)
     
     # Create a log entry for the update request
@@ -333,9 +334,11 @@ def remove_stock(item_id: str, amount: int):
     item_entry: StockValue = get_item_from_db(item_id)
     old_item_entry: StockValue = deepcopy(item_entry)
     
+    # Update stock
     item_entry.stock -= int(amount)
     
     if item_entry.stock < 0:
+        # Create a log entry for the error
         error_payload = LogStockValue(
             id=log_id,
             type=LogType.SENT,
@@ -345,8 +348,9 @@ def remove_stock(item_id: str, amount: int):
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
-        db.set(get_key(), msgpack.encode(error_payload))
-        abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
+        log_key = get_key()
+        db.set(log_key, msgpack.encode(error_payload))
+        abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
         
     # Create a log entry for the update request
     update_payload = LogStockValue(
@@ -358,6 +362,7 @@ def remove_stock(item_id: str, amount: int):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     
+    # Set the log entry and the updated item in the pipeline
     log_key = get_key()
     pipeline_db.set(log_key, msgpack.encode(update_payload))
     pipeline_db.set(item_id, msgpack.encode(item_entry))
@@ -384,6 +389,15 @@ def remove_stock(item_id: str, amount: int):
     return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
 
 
+def get_key():
+    try:
+        response = requests.get(f"{GATEWAY_URL}/ids/create")
+    except requests.exceptions.RequestException:
+        abort(400, REQ_ERROR_STR)
+    else:
+        return response.text
+
+
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
 def batch_init_users(n: int, starting_stock: int, item_price: int):
     """This function apparenlty boeit niet."""
@@ -400,15 +414,6 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
-
-
-def get_key():
-    try:
-        response = requests.get(f"{GATEWAY_URL}/ids/create")
-    except requests.exceptions.RequestException:
-        abort(400, REQ_ERROR_STR)
-    else:
-        return response.text
 
 
 if __name__ == '__main__':
