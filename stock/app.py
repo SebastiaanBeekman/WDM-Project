@@ -1,5 +1,5 @@
-import logging
 import os
+import logging
 import atexit
 import uuid
 import requests
@@ -18,11 +18,12 @@ GATEWAY_URL = os.environ['GATEWAY_URL']
 
 app = Flask("stock-service")
 
-
-db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
-                              port=int(os.environ['REDIS_PORT']),
-                              password=os.environ['REDIS_PASSWORD'],
-                              db=int(os.environ['REDIS_DB']))
+db: redis.Redis = redis.Redis(
+    host=os.environ['REDIS_HOST'],
+    port=int(os.environ['REDIS_PORT']),
+    password=os.environ['REDIS_PASSWORD'],
+    db=int(os.environ['REDIS_DB'])
+)
 pipeline_db = db.pipeline()
 
 
@@ -90,7 +91,7 @@ def format_log_entry(log_entry: LogStockValue) -> dict:
         "type": log_entry.type,
         "status": log_entry.status,
         "stock_id": log_entry.stock_id,
-        "stockvalue:": {
+        "stockValue:": {
             "old": {
                 "stock": log_entry.old_stockvalue.stock if log_entry.old_stockvalue else None,
                 "price": log_entry.old_stockvalue.price if log_entry.old_stockvalue else None
@@ -157,8 +158,8 @@ def find_all_logs_from(number: int):
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-
 ### END OF LOG FUNCTIONS ###
+
 @app.post('/item/create/<price>')
 def create_item(price: int):
     log_id = str(uuid.uuid4())
@@ -210,7 +211,7 @@ def create_item(price: int):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-    return jsonify({'item_id': item_id, 'log': log_key}), 200
+    return jsonify({'item_id': item_id, 'log_key': log_key}), 200
 
 
 @app.get('/find/<item_id>')
@@ -273,6 +274,7 @@ def add_stock(item_id: str, amount: int):
 
     item_entry: StockValue = get_item_from_db(item_id)
     old_item_entry: StockValue = deepcopy(item_entry)
+    
     item_entry.stock += int(amount)
     
     # Create a log entry for the update request
@@ -330,6 +332,7 @@ def remove_stock(item_id: str, amount: int):
     
     item_entry: StockValue = get_item_from_db(item_id)
     old_item_entry: StockValue = deepcopy(item_entry)
+    
     item_entry.stock -= int(amount)
     
     if item_entry.stock < 0:
