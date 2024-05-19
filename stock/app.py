@@ -62,7 +62,7 @@ class LogStockValue(Struct):
     to_url: str | None = None
 
 
-def get_item_from_db(item_id: str, log_id: str | None = None, url: str | None = None) -> StockValue | None:
+def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | None:
     try:
         entry: bytes = db.get(item_id)
     except redis.exceptions.RedisError:
@@ -74,7 +74,8 @@ def get_item_from_db(item_id: str, log_id: str | None = None, url: str | None = 
         error_payload = LogStockValue(
             key=log_id if log_id else str(uuid.uuid4()),
             type=LogType.SENT,
-            
+            old_stockvalue=entry,
+            stock_id=item_id,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
         db.set(get_id(), msgpack.encode(error_payload))
@@ -157,18 +158,16 @@ def find_all_logs_from(number: int):
         return abort(500, 'Failed to retrieve logs from the database')
 
 ### END OF LOG FUNCTIONS ###
-
 @app.post('/item/create/<price>')
 def create_item(price: int):
     log_id = str(uuid.uuid4())
-    url = f"/item/create/{price}"
 
     # Create a log entry for the receieved request from the user
     received_payload_from_user = LogStockValue(
         key=log_id,
         type=LogType.RECEIVED,
-        from_url=request.url,
-        to_url=url,
+        from_url=request.referrer,  # Endpoint that called this
+        to_url=request.url,         # This endpoint
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
@@ -202,27 +201,28 @@ def create_item(price: int):
     sent_payload_to_user = LogStockValue(
         key=log_id,
         type=LogType.SENT,
-        from_url=url,
-        to_url=request.url,
+        from_url=request.url,       # This endpoint
+        to_url=request.referrer,    # Endpoint that called this
+        stock_id=item_id,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     db.set(get_id(), msgpack.encode(sent_payload_to_user))
 
-    return jsonify({'item_id': item_id, 'log': log_key})
+    return jsonify({'item_id': item_id, 'log': log_key}), 200
 
 
 @app.get('/find/<item_id>')
 def find_item(item_id: str):
-    log_id = str(uuid.uuid4())
-    url = f"/find/{item_id}"
+    log_id: str | None = request.args.get("log_id")
+    log_id = log_id if log_id else str(uuid.uuid4())
 
     # Create a log entry for the receieved request from the user
     received_payload_from_user = LogStockValue(
         key=log_id,
         type=LogType.RECEIVED,
-        from_url=request.url,
-        to_url=url,
+        from_url=request.referrer,  # Endpoint that called this
+        to_url=request.url,         # This endpoint
         stock_id=item_id,
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -230,14 +230,14 @@ def find_item(item_id: str):
     db.set(get_id(), msgpack.encode(received_payload_from_user))
 
     # Retrieve the item from the database
-    item_entry: StockValue = get_item_from_db(item_id, log_id, url)
+    item_entry: StockValue = get_item_from_db(item_id, log_id)
 
     # Create a log entry for the sent response
     sent_payload_to_user = LogStockValue(
         key=log_id,
         type=LogType.SENT,
-        from_url=url,
-        to_url=request.url,
+        from_url=request.url,       # This endpoint
+        to_url=request.referrer,    # Endpoint that called this
         stock_id=item_id,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -255,27 +255,31 @@ def find_item(item_id: str):
 
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
-    log_id = str(uuid.uuid4())
-    url = f"/add/{item_id}/{amount}"
+    log_id: str | None = request.args.get("log_id")
+    log_id = log_id if log_id else str(uuid.uuid4())
     
-    # Create a log entry for the receieved request
+    # Create a log entry for the receieved request from the user
     received_payload_from_user = LogStockValue(
         key=log_id,
         type=LogType.RECEIVED,
-        url=url,
+        from_url=request.referrer,  # Endpoint that called this
+        to_url=request.url,         # This endpoint
+        stock_id=item_id,
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     db.set(get_id(), msgpack.encode(received_payload_from_user))
-    
+
     item_entry: StockValue = get_item_from_db(item_id)
+    old_item_entry = item_entry.copy()
     item_entry.stock += int(amount)
     
     # Create a log entry for the update request
     update_payload = LogStockValue(
         key=log_id,
         type=LogType.UPDATE,
-        url=url,
+        old_stockvalue=old_item_entry,
+        new_stockvalue=item_entry,
         stock_id=item_id,
         stockvalue=item_entry,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -291,7 +295,17 @@ def add_stock(item_id: str, amount: int):
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     
-    
+    # Create a log entry for the sent response back to the user
+    sent_payload_to_user = LogStockValue(
+        key=log_id,
+        type=LogType.SENT,
+        from_url=request.url,       # This endpoint
+        to_url=request.referrer,    # Endpoint that called this
+        stock_id=item_id,
+        status=LogStatus.SUCCESS,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_id(), msgpack.encode(sent_payload_to_user))
     
     return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_key}", status=200)
 
