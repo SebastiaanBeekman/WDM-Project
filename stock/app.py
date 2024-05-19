@@ -5,6 +5,7 @@ import uuid
 import requests
 from enum import Enum
 import redis
+from copy import deepcopy
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
@@ -51,7 +52,7 @@ class LogStatus(str, Enum):
 
 
 class LogStockValue(Struct):
-    key: str
+    id: str
     dateTime: str
     type: LogType | None = None
     status: LogStatus | None = None
@@ -72,20 +73,20 @@ def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | No
 
     if entry is None:
         error_payload = LogStockValue(
-            key=log_id if log_id else str(uuid.uuid4()),
+            id=log_id if log_id else str(uuid.uuid4()),
             type=LogType.SENT,
             old_stockvalue=entry,
             stock_id=item_id,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"))
-        db.set(get_id(), msgpack.encode(error_payload))
+        db.set(get_key(), msgpack.encode(error_payload))
         return abort(400, f"Item: {item_id} not found!")
     return entry
 
 ### START OF LOG FUNCTIONS ###
 def format_log_entry(log_entry: LogStockValue) -> dict:
     return {
-        "key": log_entry.key,
+        "id": log_entry.id,
         "type": log_entry.type,
         "status": log_entry.status,
         "stock_id": log_entry.stock_id,
@@ -164,21 +165,21 @@ def create_item(price: int):
 
     # Create a log entry for the receieved request from the user
     received_payload_from_user = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.RECEIVED,
         from_url=request.referrer,  # Endpoint that called this
         to_url=request.url,         # This endpoint
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(received_payload_from_user))
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
 
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
 
     # Create a log entry for the create request
     create_payload = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.CREATE,
         stock_id=item_id,
         new_stockvalue=stock_value,
@@ -186,7 +187,7 @@ def create_item(price: int):
     )
 
     # Set the log entry and the updated item in the pipeline
-    log_key = get_id()
+    log_key = get_key()
     pipeline_db.set(log_key, msgpack.encode(create_payload))
     pipeline_db.set(item_id, msgpack.encode(stock_value))
     try:
@@ -199,7 +200,7 @@ def create_item(price: int):
 
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.SENT,
         from_url=request.url,       # This endpoint
         to_url=request.referrer,    # Endpoint that called this
@@ -207,7 +208,7 @@ def create_item(price: int):
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(sent_payload_to_user))
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
     return jsonify({'item_id': item_id, 'log': log_key}), 200
 
@@ -219,7 +220,7 @@ def find_item(item_id: str):
 
     # Create a log entry for the receieved request from the user
     received_payload_from_user = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.RECEIVED,
         from_url=request.referrer,  # Endpoint that called this
         to_url=request.url,         # This endpoint
@@ -227,14 +228,14 @@ def find_item(item_id: str):
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(received_payload_from_user))
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
 
     # Retrieve the item from the database
     item_entry: StockValue = get_item_from_db(item_id, log_id)
 
     # Create a log entry for the sent response
     sent_payload_to_user = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.SENT,
         from_url=request.url,       # This endpoint
         to_url=request.referrer,    # Endpoint that called this
@@ -242,7 +243,7 @@ def find_item(item_id: str):
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(sent_payload_to_user))
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
     # Return the item
     return jsonify(
@@ -260,7 +261,7 @@ def add_stock(item_id: str, amount: int):
     
     # Create a log entry for the receieved request from the user
     received_payload_from_user = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.RECEIVED,
         from_url=request.referrer,  # Endpoint that called this
         to_url=request.url,         # This endpoint
@@ -268,36 +269,36 @@ def add_stock(item_id: str, amount: int):
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(received_payload_from_user))
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
 
     item_entry: StockValue = get_item_from_db(item_id)
-    old_item_entry = item_entry.copy()
+    old_item_entry: StockValue = deepcopy(item_entry)
     item_entry.stock += int(amount)
     
     # Create a log entry for the update request
     update_payload = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.UPDATE,
+        stock_id=item_id,
         old_stockvalue=old_item_entry,
         new_stockvalue=item_entry,
-        stock_id=item_id,
-        stockvalue=item_entry,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
 
     # Set the log entry and the updated item in the pipeline
-    log_key = get_id()
+    log_key = get_key()
     pipeline_db.set(log_key, msgpack.encode(update_payload))
     pipeline_db.set(item_id, msgpack.encode(item_entry))
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
+        app.logger.debug(f"Item: {item_id} failed to update")
         return abort(400, DB_ERROR_STR)
     
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
-        key=log_id,
+        id=log_id,
         type=LogType.SENT,
         from_url=request.url,       # This endpoint
         to_url=request.referrer,    # Endpoint that called this
@@ -305,35 +306,79 @@ def add_stock(item_id: str, amount: int):
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    db.set(get_id(), msgpack.encode(sent_payload_to_user))
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
     
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_key}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
 
 
 @app.post('/subtract/<item_id>/<amount>')
 def remove_stock(item_id: str, amount: int):
-    id = get_id()
+    log_id: str | None = request.args.get("log_id")
+    log_id = log_id if log_id else str(uuid.uuid4())
+    
+    # Create a log entry for the receieved request from the user
+    received_payload_from_user = LogStockValue(
+        id=log_id,
+        type=LogType.RECEIVED,
+        from_url=request.referrer,  # Endpoint that called this
+        to_url=request.url,         # This endpoint
+        stock_id=item_id,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    
     item_entry: StockValue = get_item_from_db(item_id)
-    # update stock, serialize and update database
+    old_item_entry: StockValue = deepcopy(item_entry)
     item_entry.stock -= int(amount)
-    app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
-    log = msgpack.encode(
-        LogStockValue(
-            key=item_id,
-            stockvalue=item_entry,
+    
+    if item_entry.stock < 0:
+        error_payload = LogStockValue(
+            id=log_id,
+            type=LogType.SENT,
+            stock_id=item_id,
+            old_stockvalue=old_item_entry,
+            new_stockvalue=item_entry,
+            status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
-    )
-    if item_entry.stock < 0:
+        db.set(get_key(), msgpack.encode(error_payload))
         abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
+        
+    # Create a log entry for the update request
+    update_payload = LogStockValue(
+        id=log_id,
+        type=LogType.UPDATE,
+        stock_id=item_id,
+        old_stockvalue=old_item_entry,
+        new_stockvalue=item_entry,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    
+    log_key = get_key()
+    pipeline_db.set(log_key, msgpack.encode(update_payload))
     pipeline_db.set(item_id, msgpack.encode(item_entry))
-    pipeline_db.set(id, log)
     try:
         pipeline_db.execute()
+        app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
     except redis.exceptions.RedisError:
         pipeline_db.discard()
+        app.logger.debug(f"Item: {item_id} failed to update")
         return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {id}", status=200)
+    
+    # Create a log entry for the sent response back to the user
+    sent_payload_to_user = LogStockValue(
+        id=log_id,
+        type=LogType.SENT,
+        from_url=request.url,       # This endpoint
+        to_url=request.referrer,    # Endpoint that called this
+        stock_id=item_id,
+        status=LogStatus.SUCCESS,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
+    
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
 
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
@@ -354,7 +399,7 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
     return jsonify({"msg": "Batch init for stock successful"})
 
 
-def get_id():
+def get_key():
     try:
         response = requests.get(f"{GATEWAY_URL}/ids/create")
     except requests.exceptions.RequestException:
@@ -369,3 +414,4 @@ else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
+    # app.logger.setLevel(logging.DEBUG)
