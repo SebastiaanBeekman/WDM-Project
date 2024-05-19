@@ -78,10 +78,9 @@ def send_post_request(url: str):
         return response
 
 
-def send_get_request(url: str, optional_params: dict[str, str] | None = None):
+def send_get_request(url: str, log_id: str | None = None):
     headers = {"referer": request.url}
-    optional_params = {} if optional_params is None else optional_params
-    url = url_for(url, **optional_params)  # The ** operator unpacks the dictionary into keyword arguments
+    url += f"?log_id={log_id}" if log_id is not None else ""
     try:
         response = requests.get(url, headers=headers)
     except requests.exceptions.RequestException:
@@ -90,17 +89,27 @@ def send_get_request(url: str, optional_params: dict[str, str] | None = None):
         return response
 
 
-def get_order_from_db(order_id: str) -> OrderValue | None:
+def get_order_from_db(order_id: str, log_id: str | None = None) -> OrderValue | None:
     try:
-        # get serialized data
         entry: bytes = db.get(order_id)
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    # deserialize data if it exists else return null
+    
     entry: OrderValue | None = msgpack.decode(entry, type=OrderValue) if entry else None
+    
     if entry is None:
-        # if order does not exist in the database; abort
-        abort(400, f"Order: {order_id} not found!")
+        log_key = get_key()
+        error_log = LogOrderValue(
+            id=log_id if log_id else str(uuid.uuid4()),
+            type=LogType.SENT,
+            order_id=order_id,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(log_key, msgpack.encode(error_log))
+        abort(400, f"Order: {order_id} not found! Log key: {log_key}")
     return entry
 
 ### START OF LOG FUNCTIONS ###
@@ -280,8 +289,7 @@ def find_order(order_id: str):
 
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 def add_item(order_id: str, item_id: str, quantity: int):
-    log_id: str | None = request.args.get('log_id')
-    log_id = log_id if log_id is not None else str(uuid.uuid4())
+    log_id: str | None = request.args.get('log_id') or str(uuid.uuid4())
 
     # Create a log entry for the received request
     received_payload_from_user = LogOrderValue(
@@ -296,25 +304,25 @@ def add_item(order_id: str, item_id: str, quantity: int):
     db.set(get_key(), msgpack.encode(received_payload_from_user))
 
     # Create a log entry for the sent request to the stock service
-    to_url = f"{GATEWAY_URL}/stock/find/{item_id}"
+    request_url = f"{GATEWAY_URL}/stock/find/{item_id}"
     sent_payload_to_stock = LogOrderValue(
         id=log_id,
         type=LogType.SENT,
         from_url=request.url,
-        to_url=to_url,
+        to_url=request_url,
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_stock))
 
     # Send the request
-    stock_reply = send_get_request(to_url, {"log_id": log_id})
+    stock_reply = send_get_request(request_url, log_id)
 
     # Create a log entry for the received response (success or failure) from the stock service
     received_payload_from_stock = LogOrderValue(
         id=log_id,
         type=LogType.RECEIVED,
-        from_url=to_url,
+        from_url=request_url,
         to_url=request.url,
         status=LogStatus.SUCCESS if stock_reply.status_code == 200 else LogStatus.FAILURE,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
@@ -364,7 +372,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}, log_id: {log_id}", status=200)
+    return Response(f"Item: {item_id} added to: {order_id} total price updated to: {order_entry.total_cost}, log_id: {log_id}", status=200)
 
 
 def rollback_stock(removed_items: list[tuple[str, int]]):
@@ -374,26 +382,20 @@ def rollback_stock(removed_items: list[tuple[str, int]]):
 
 @app.post('/checkout/<order_id>')
 def checkout(order_id: str):
-
-    # generate IDs for the log
     log_id = str(uuid.uuid4())
-    user_request_id = get_key()
-
-    # url of the current checkout
-    url = f"{GATEWAY_URL}/orders/checkout/{order_id}"
 
     # Create a log entry for the received request
     received_payload_from_user = LogOrderValue(
-        key=log_id,
+        id=log_id,
         type=LogType.RECEIVED,
-        url=url,
+        from_url=request.referrer,  # Endpoint that called this
+        to_url=request.url,         # This endpoint
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
-    db.set(user_request_id, msgpack.encode(received_payload_from_user))
+    db.set(get_key(), msgpack.encode(received_payload_from_user))
 
-    # app.logger.debug(f"Checking out {order_id}")
-    order_entry: OrderValue | None = get_order_from_db(order_id)
+    order_entry: OrderValue = get_order_from_db(order_id)
 
     # get the quantity per item
     items_quantities: dict[str, int] = defaultdict(int)
@@ -408,9 +410,10 @@ def checkout(order_id: str):
         request_url = f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}"
 
         sent_payload_to_stock = LogOrderValue(
-            key=log_id,
+            id=log_id,
             type=LogType.SENT,
-            url=request_url,
+            from_url=request.url,
+            to_url=request_url,
             status=LogStatus.PENDING,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
@@ -420,16 +423,16 @@ def checkout(order_id: str):
         stock_reply = send_post_request(request_url)
 
         received_payload_from_stock = LogOrderValue(
-            key=log_id,
+            id=log_id,
             type=LogType.RECEIVED,
-            url=request_url,
+            from_url=request_url,
+            to_url=request.url,
             status=LogStatus.SUCCESS if stock_reply.status_code == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
         if stock_reply.status_code != 200:
-            # If one item does not have enough stock we need to rollback
             rollback_stock(removed_items)
             abort(400, f'Out of stock on item_id: {item_id}')
         removed_items.append((item_id, quantity))
@@ -533,4 +536,5 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    app.logger.setLevel(gunicorn_logger.level)
+    # app.logger.setLevel(gunicorn_logger.level)
+    app.logger.setLevel(logging.DEBUG)
