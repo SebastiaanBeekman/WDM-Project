@@ -7,7 +7,7 @@ from enum import Enum
 import redis
 from copy import deepcopy
 import re
-import time
+from threading import Lock
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
@@ -166,7 +166,7 @@ def find_all_logs_from(number: int):
 
 @app.post('/item/create/<price>')
 def create_item(price: int):
-    if cooldown_flag:
+    if cooldown_flag.cooldown_flag:
         return abort(418, "Cooldown is active, please wait until it is over.")
     log_id = str(uuid.uuid4())
 
@@ -454,35 +454,23 @@ def find_all_logs_time(number: int):
     
 @app.post('/cooldown_start/<prev>') 
 def start_cooldown(prev: str):
-    app.logger.debug(f"Cooldown started in stock")
-    global cooldown_flag
-    global previous_cool_down
-    previous_cool_down = prev
-    cooldown_flag = True
+    app.logger.debug("Cooldown started in stock")
+    with cooldown_flag.lock:
+        cooldown_flag.cooldown_flag = True
+    app.logger.debug(prev)
     return Response(f"Cooldown started in stock", status=200)
     
 @app.post('/cooldown_stop')  
 def stop_cooldown():
-    app.logger.debug(f"Cooldown stopped in stock")
-    global cooldown_flag
-    cooldown_flag = False
+    app.logger.debug("Cooldown stopped in stock")
+    with cooldown_flag.lock:
+        cooldown_flag.cooldown_flag = False
     return Response(f"Cooldown stopped in stock", status=200)
-    
-previous_cool_down = None
-cooldown_flag = False
 
-# def fix_consistency():
-#     time = int(datetime.now().strftime("%Y%m%d%H%M%S%f")[:-7]) 
-#     logs = find_all_logs_time(time)
-#     app.logger.debug(logs)
-#     app.logger.debug(time)
-    
-# scheduler = BackgroundScheduler()
-# scheduler.add_job(fix_consistency, 'interval', seconds=10)
-# scheduler.start()
-
-# atexit.register(lambda: scheduler.shutdown())
-
+class cooldown_flag:
+    lock = Lock()
+    with lock:
+        cooldown_flag = False
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)

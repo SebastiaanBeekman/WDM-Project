@@ -12,6 +12,7 @@ services:
       - stock-service
       - payment-service
       - ids-service
+      - cooldown-service
 
   order-service:
     build: ./order
@@ -61,6 +62,11 @@ services:
   ids-service:
     build: ./ids
     image: ids:latest
+    command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
+
+  cooldown-service:
+    build: ./cooldown
+    image: cooldown:latest
     environment:
       - GATEWAY_URL=http://gateway:80
     command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app

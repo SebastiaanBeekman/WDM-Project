@@ -178,9 +178,28 @@ def checkout(order_id: str):
     return Response("Checkout successful", status=200)
 
 
+@app.post('/cooldown_start/<prev>') 
+def start_cooldown(prev: str):
+    app.logger.debug(f"Cooldown started in order")
+    cooldown_flag.cooldown_flag = True
+    app.logger.debug(prev)
+    return Response(f"Cooldown started in order", status=200)
+    
+@app.post('/cooldown_stop')  
+def stop_cooldown():
+    app.logger.debug(f"Cooldown stopped in order")
+    cooldown_flag.cooldown_flag = False
+    return Response(f"Cooldown stopped in order", status=200)
+    
+class cooldown_flag:
+    cooldown_flag = False
+
+
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
+    app.logger.setLevel(logging.DEBUG)
+    
