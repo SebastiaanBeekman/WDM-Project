@@ -405,6 +405,8 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
 
 @app.post('/checkout/<order_id>')
 def checkout(order_id: str):
+    app.logger.debug(f"Checking out {order_id}") # Keep this for benchmarking purposes
+    
     log_id = str(uuid.uuid4())
 
     # Create a log entry for the received request
@@ -546,7 +548,7 @@ def checkout(order_id: str):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-    app.logger.debug("Checkout successful")
+    app.logger.debug("Checkout successful") # Keep this for benchmarking purposes
     return Response(f"Checkout successful, log: {log_key}", status=200)
 
 
@@ -590,5 +592,5 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    # app.logger.setLevel(gunicorn_logger.level)
-    app.logger.setLevel(logging.DEBUG)
+    app.logger.setLevel(gunicorn_logger.level)
+    # app.logger.setLevel(logging.DEBUG)

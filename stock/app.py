@@ -165,6 +165,8 @@ def find_all_logs_from(number: int):
 
 @app.post('/item/create/<price>')
 def create_item(price: int):
+    app.logger.debug(f"Item: {item_id} created") # Keep this for benchmarking purposes
+    
     log_id = str(uuid.uuid4())
 
     # Create a log entry for the receieved request from the user
@@ -196,10 +198,8 @@ def create_item(price: int):
     pipeline_db.set(item_id, msgpack.encode(stock_value))
     try:
         pipeline_db.execute()
-        app.logger.debug(f"Item: {item_id} created")
     except redis.exceptions.RedisError:
         pipeline_db.discard()
-        app.logger.debug(f"Item: {item_id} failed to create")
         return abort(400, DB_ERROR_STR)
 
     # Create a log entry for the sent response back to the user
@@ -299,7 +299,6 @@ def add_stock(item_id: str, amount: int):
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
-        app.logger.debug(f"Item: {item_id} failed to update")
         return abort(400, DB_ERROR_STR)
     
     # Create a log entry for the sent response back to the user
@@ -339,6 +338,7 @@ def remove_stock(item_id: str, amount: int):
     
     # Update stock
     item_entry.stock -= int(amount)
+    app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}") # Keep this for benchmarking purposes
     
     if item_entry.stock < 0:
         # Create a log entry for the error
@@ -371,10 +371,8 @@ def remove_stock(item_id: str, amount: int):
     pipeline_db.set(item_id, msgpack.encode(item_entry))
     try:
         pipeline_db.execute()
-        app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
     except redis.exceptions.RedisError:
         pipeline_db.discard()
-        app.logger.debug(f"Item: {item_id} failed to update")
         return abort(400, DB_ERROR_STR)
     
     # Create a log entry for the sent response back to the user
@@ -453,7 +451,7 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
     
 def test_consistency():
     time: datetime = datetime.now()
-    app.logger.debug(time)
+    # app.logger.debug(time)
     
     logs = find_all_logs_time(time, 1)
     log_dict = defaultdict(list)
@@ -478,7 +476,7 @@ def fix_consistency():
     for key in log_dict:
         log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["dateTime"])
     
-    app.logger.debug(log_dict)
+    # app.logger.debug(log_dict)
     
 scheduler = BackgroundScheduler()
 scheduler.add_job(fix_consistency, 'interval', seconds=30)
@@ -489,6 +487,6 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    # app.logger.setLevel(gunicorn_logger.level)
-    app.logger.setLevel(logging.DEBUG)
+    app.logger.setLevel(gunicorn_logger.level)
+    # app.logger.setLevel(logging.DEBUG)
     

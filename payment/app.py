@@ -191,10 +191,8 @@ def create_user():
     pipeline_db.set(user_id, msgpack.encode(user_value))
     try:
         pipeline_db.execute()
-        app.logger.debug(f"User: {user_id} with credit: {user_value.credit} created")
     except redis.exceptions.RedisError:
         pipeline_db.discard()
-        app.logger.error("User: {user_id} failed to create")
         return abort(400, DB_ERROR_STR)
     
     # create log entry for the sent response
@@ -294,7 +292,6 @@ def add_credit(user_id: str, amount: int):
         pipeline_db.execute()
     except redis.exceptions.RedisError:
         pipeline_db.discard()
-        app.logger.error(f"User: {user_id} failed to update")
         return abort(400, DB_ERROR_STR)
     
     # create log entry for the sent response
@@ -314,7 +311,7 @@ def add_credit(user_id: str, amount: int):
 
 @app.post('/pay/<user_id>/<amount>')
 def remove_credit(user_id: str, amount: int):
-    app.logger.debug(f"Removing {amount} credit from user: {user_id}")
+    app.logger.debug(f"Removing {amount} credit from user: {user_id}") # Keep for benchmarking purposes
     log_id: str | None = request.args.get('log_id')
     log_id = log_id if log_id else str(uuid.uuid4())
     
@@ -369,10 +366,8 @@ def remove_credit(user_id: str, amount: int):
     pipeline_db.set(user_id, msgpack.encode(user_entry))
     try:
         pipeline_db.execute()
-        app.logger.debug(f"User: {user_id} with credit: {user_entry.credit} updated")
     except redis.exceptions.RedisError:
         pipeline_db.discard()
-        app.logger.error(f"User: {user_id} failed to update")
         return abort(400, DB_ERROR_STR)
     
     # Create log entry for the sent response
