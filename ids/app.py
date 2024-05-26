@@ -1,23 +1,23 @@
 import logging
 from flask import Flask, abort
-from threading import Lock
 from datetime import datetime
 import os
+from pymemcache.client import base
 
-sequence_lock = Lock()
+
 
 app = Flask("ids-service")
 
-
-counter = 0
+client = base.Client(("memcached", 11211))
+client.set("counter", 1)
 
 @app.get('/create')
 def create_id():
-    global counter
+    counter = int(client.get("counter").decode('utf-8'))
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    with sequence_lock:
-        counter += 1
-        return f"log:{timestamp}{counter}"
+    counter += 1
+    client.set("counter", counter)
+    return f"log:{timestamp}{counter}"
   
 
 

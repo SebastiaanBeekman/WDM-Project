@@ -415,19 +415,9 @@ def batch_init_users(n: int, starting_money: int):
 
 @app.post('/cooldown_start/<prev>') 
 def start_cooldown(prev: str):
-    app.logger.debug(f"Cooldown started in payment")
-    cooldown_flag.cooldown_flag = True
-    app.logger.debug(prev)
+    previous_cooldown = prev
     return Response(f"Cooldown started in payment", status=200)
-    
-@app.post('/cooldown_stop')  
-def stop_cooldown():
-    app.logger.debug(f"Cooldown stopped in payment")
-    cooldown_flag.cooldown_flag = False
-    return Response(f"Cooldown stopped in payment", status=200)
-    
-class cooldown_flag:
-    cooldown_flag = False
+
 
 
 if __name__ == '__main__':

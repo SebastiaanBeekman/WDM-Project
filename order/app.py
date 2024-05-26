@@ -4,6 +4,7 @@ import atexit
 import random
 import uuid
 from collections import defaultdict
+from pymemcache.client import base
 
 import redis
 import requests
@@ -148,6 +149,8 @@ def rollback_stock(removed_items: list[tuple[str, int]]):
 
 @app.post('/checkout/<order_id>')
 def checkout(order_id: str):
+    if client.get("cooldown_flag").decode('utf-8') == "True":
+        return abort(418, "Cooldown in progress")
     app.logger.debug(f"Checking out {order_id}")
     order_entry: OrderValue = get_order_from_db(order_id)
     # get the quantity per item
@@ -181,18 +184,19 @@ def checkout(order_id: str):
 @app.post('/cooldown_start/<prev>') 
 def start_cooldown(prev: str):
     app.logger.debug(f"Cooldown started in order")
-    cooldown_flag.cooldown_flag = True
-    app.logger.debug(prev)
+    client.set("cooldown_flag", True)
+    previous_cooldown = prev
     return Response(f"Cooldown started in order", status=200)
     
 @app.post('/cooldown_stop')  
 def stop_cooldown():
     app.logger.debug(f"Cooldown stopped in order")
-    cooldown_flag.cooldown_flag = False
+    client.set("cooldown_flag", False)
     return Response(f"Cooldown stopped in order", status=200)
     
-class cooldown_flag:
-    cooldown_flag = False
+
+client = base.Client(("memcached", 11211))
+client.set("cooldown_flag", False)
 
 
 if __name__ == '__main__':

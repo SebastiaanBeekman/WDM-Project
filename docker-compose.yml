@@ -70,4 +70,12 @@ services:
     environment:
       - GATEWAY_URL=http://gateway:80
     command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
+
+  memcached:
+    image: memcached:latest
+    ports:
+      - "11211:11211"
+    command: memcached 
+
+  
     
