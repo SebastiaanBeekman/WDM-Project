@@ -13,6 +13,8 @@ from flask import Flask, jsonify, abort, Response, request
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 
+from redlock import RedLock
+
 
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
@@ -165,8 +167,6 @@ def find_all_logs_from(number: int):
 
 @app.post('/item/create/<price>')
 def create_item(price: int):
-    app.logger.debug(f"Item: {item_id} created") # Keep this for benchmarking purposes
-    
     log_id = str(uuid.uuid4())
 
     # Create a log entry for the receieved request from the user
@@ -182,6 +182,7 @@ def create_item(price: int):
 
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
+    app.logger.debug(f"Item: {item_id} created") # Keep this for benchmarking purposes
 
     # Create a log entry for the create request
     create_payload = LogStockValue(
@@ -275,31 +276,32 @@ def add_stock(item_id: str, amount: int):
     )
     db.set(get_key(), msgpack.encode(received_payload_from_user))
 
-    item_entry: StockValue = get_item_from_db(item_id)
-    old_item_entry: StockValue = deepcopy(item_entry)
-    
-    # Update the stock value
-    item_entry.stock += int(amount)
-    
-    # Create a log entry for the update request
-    update_payload = LogStockValue(
-        id=log_id,
-        type=LogType.UPDATE,
-        stock_id=item_id,
-        old_stockvalue=old_item_entry,
-        new_stockvalue=item_entry,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
+    with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
+        item_entry: StockValue = get_item_from_db(item_id)
+        old_item_entry: StockValue = deepcopy(item_entry)
+        
+        # Update the stock value
+        item_entry.stock += int(amount)
+        
+        # Create a log entry for the update request
+        update_payload = LogStockValue(
+            id=log_id,
+            type=LogType.UPDATE,
+            stock_id=item_id,
+            old_stockvalue=old_item_entry,
+            new_stockvalue=item_entry,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
 
-    # Set the log entry and the updated item in the pipeline
-    log_key = get_key()
-    pipeline_db.set(log_key, msgpack.encode(update_payload))
-    pipeline_db.set(item_id, msgpack.encode(item_entry))
-    try:
-        pipeline_db.execute()
-    except redis.exceptions.RedisError:
-        pipeline_db.discard()
-        return abort(400, DB_ERROR_STR)
+        # Set the log entry and the updated item in the pipeline
+        log_key = get_key()
+        pipeline_db.set(log_key, msgpack.encode(update_payload))
+        pipeline_db.set(item_id, msgpack.encode(item_entry))
+        try:
+            pipeline_db.execute()
+        except redis.exceptions.RedisError:
+            pipeline_db.discard()
+            return abort(400, DB_ERROR_STR)
     
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
@@ -333,47 +335,48 @@ def remove_stock(item_id: str, amount: int):
     )
     db.set(get_key(), msgpack.encode(received_payload_from_user))
     
-    item_entry: StockValue = get_item_from_db(item_id)
-    old_item_entry: StockValue = deepcopy(item_entry)
-    
-    # Update stock
-    item_entry.stock -= int(amount)
-    app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}") # Keep this for benchmarking purposes
-    
-    if item_entry.stock < 0:
-        # Create a log entry for the error
-        error_payload = LogStockValue(
+    with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
+        item_entry: StockValue = get_item_from_db(item_id)
+        old_item_entry: StockValue = deepcopy(item_entry)
+        
+        # Update stock
+        item_entry.stock -= int(amount)
+        app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}") # Keep this for benchmarking purposes
+        
+        if item_entry.stock < 0:
+            # Create a log entry for the error
+            error_payload = LogStockValue(
+                id=log_id,
+                type=LogType.SENT,
+                stock_id=item_id,
+                old_stockvalue=old_item_entry,
+                new_stockvalue=item_entry,
+                status=LogStatus.FAILURE,
+                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+            )
+            log_key = get_key()
+            db.set(log_key, msgpack.encode(error_payload))
+            abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
+            
+        # Create a log entry for the update request
+        update_payload = LogStockValue(
             id=log_id,
-            type=LogType.SENT,
+            type=LogType.UPDATE,
             stock_id=item_id,
             old_stockvalue=old_item_entry,
             new_stockvalue=item_entry,
-            status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
-        log_key = get_key()
-        db.set(log_key, msgpack.encode(error_payload))
-        abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
         
-    # Create a log entry for the update request
-    update_payload = LogStockValue(
-        id=log_id,
-        type=LogType.UPDATE,
-        stock_id=item_id,
-        old_stockvalue=old_item_entry,
-        new_stockvalue=item_entry,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    
-    # Set the log entry and the updated item in the pipeline
-    log_key = get_key()
-    pipeline_db.set(log_key, msgpack.encode(update_payload))
-    pipeline_db.set(item_id, msgpack.encode(item_entry))
-    try:
-        pipeline_db.execute()
-    except redis.exceptions.RedisError:
-        pipeline_db.discard()
-        return abort(400, DB_ERROR_STR)
+        # Set the log entry and the updated item in the pipeline
+        log_key = get_key()
+        pipeline_db.set(log_key, msgpack.encode(update_payload))
+        pipeline_db.set(item_id, msgpack.encode(item_entry))
+        try:
+            pipeline_db.execute()
+        except redis.exceptions.RedisError:
+            pipeline_db.discard()
+            return abort(400, DB_ERROR_STR)
     
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
@@ -487,6 +490,6 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    app.logger.setLevel(gunicorn_logger.level)
-    # app.logger.setLevel(logging.DEBUG)
+    # app.logger.setLevel(gunicorn_logger.level)
+    app.logger.setLevel(logging.DEBUG)
     
