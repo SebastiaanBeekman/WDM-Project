@@ -223,6 +223,8 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
         return abort(500, 'Failed to retrieve logs from the database')
 ### END OF LOG FUNCTIONS ###
 
+# TODO
+# Add user_id check
 @app.post('/create/<user_id>')
 def create_order(user_id: str):
     log_id = str(uuid.uuid4())
@@ -264,6 +266,8 @@ def create_order(user_id: str):
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
+    
+    # Fault Tollerance: CRASH - Undo
     
     sent_payload_to_user = LogOrderValue(
         id=log_id,
@@ -393,6 +397,8 @@ def add_item(order_id: str, item_id: str, quantity: int):
     except redis.exceptions.RedisError:
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
+    
+    # Fault Tollerance - Crash, undo
 
     # Create a log for the sent response
     sent_payload_to_user = LogOrderValue(
