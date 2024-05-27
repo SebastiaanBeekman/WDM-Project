@@ -81,26 +81,19 @@ class TestMicroservices(unittest.TestCase):
 
             # Create a log entry for the receive request
             log1 = tu.create_received_from_user_log(log_id)
-            self.assertIn('msg', log1)
-            stock_log_count += 1
+            log_key_receive = tu.get_key()
+            tu.send_anything_stock(log_key_receive, log1)
             
-            self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
-            resp1 = tu.fault_tolerance_stock()
-            
-            stock_log_count -= 1    
-            self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
-            
-            
-            
-            # # Fault Tollerance: CRASH - Undo
-            # if i == 0:
+            if i == 0: 
+                stock_log_count += 1  
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+                tu.fault_tolerance_stock()
                 
-                
-            #     resp1 = tu.fault_tolerance_stock()
-            #     stock_log_count -= 1
-                
-            #     self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
-                
+                stock_log_count -= 1    
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            
+        
 
             # if i >= 1:
             #     item_id = str(uuid.uuid4())

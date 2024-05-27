@@ -578,23 +578,62 @@ def create_log_entry(log_id: int):
     return jsonify({"msg": "Log entry created"}), 200
        
             
-# @app.post('/put_anything/<id>/<anything>')           
-# def just_put_anything_in(id, anything):
-#     app.logger.debug(f"Anything: {anything}, id: {id}")
-#     db.set(id, msgpack.encode(anything))
-#     return jsonify({"msg": "Done"}), 200
+@app.post('/put_anything/<id>/<anything>')           
+def just_put_anything_in(id, anything):
+    anything = turn_log_string_to_log(anything)
+    db.set(id, msgpack.encode(anything))
+    return jsonify({"msg": "Done"}), 200
 
-# @app.get('/get_anything/<id>')
-# def get_anything(id):
-#     item = db.get(id)
-#     item = msgpack.decode(item)
-#     return jsonify({"msg": item}), 200
-            
+@app.get('/get_anything/<id>')
+def get_anything(id):
+    item = db.get(id)
+    item = msgpack.decode(item)
+    return jsonify({"msg": item}), 200
+
+
+def turn_log_string_to_log(log_str: str):
+    separated = log_str.split(", ")
+    log_id = separated[0].split("=")[1].replace("'", "")
+    date = separated[1].split("=")[1].replace("'", "")
+    logtype =check_logType(separated[2].split("=")[1].replace("'", ""))
+    logstatus =check_logStatus(separated[3].split("=")[1].replace("'", ""))
+    stock_id = None if "None" in separated[4].split("=")[1].replace("'", "") else separated[4].split("=")[1].replace("'", "")
+    old_stock = None if "None" in separated[5].split("=")[1].replace("'", "") else separated[5].split("=")[1].replace("'", "")
+    new_stock = None if "None" in separated[6].split("=")[1].replace("'", "") else separated[6].split("=")[1].replace("'", "")
+    from_url = None if "None" in separated[7].split("=")[1].replace("'", "") else separated[7].split("=")[1].replace("'", "")
+    to_url = None if "None" in separated[8].split("=")[1].replace("'", "") else separated[8].split("=")[1].replace("'", "")   
     
-# scheduler = BackgroundScheduler()
-# scheduler.add_job(fix_consistency, 'interval', seconds=30)
-# scheduler.start()
+    logvalue = LogStockValue(log_id, date, logtype, logstatus, stock_id, old_stock, new_stock, from_url, to_url)
+    app.logger.debug(logvalue)
+    return logvalue
 
+    
+def check_logType(logtype: str):
+    if "RECEIVED" in logtype:
+        return LogType.RECEIVED
+    elif "CREATE" in logtype:
+        return LogType.CREATE
+    elif "UPDATE" in logtype:
+        return LogType.UPDATE
+    elif "DELETE" in logtype:
+        return LogType.DELETE
+    elif "SENT" in logtype:
+        return LogType.SENT
+    else:
+        return None
+    
+    
+def check_logStatus(logstatus: str):
+    if "PENDING" in logstatus:
+        return LogStatus.PENDING
+    elif "SUCCESS" in logstatus:
+        return LogStatus.SUCCESS
+    elif "FAILURE" in logstatus:
+        return LogStatus.FAILURE
+    else:
+        return None
+    
+    
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
 else:
