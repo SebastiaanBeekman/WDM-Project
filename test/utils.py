@@ -1,6 +1,34 @@
 import requests
 
+import datetime
+from class_utils import (
+    LogStockValue, LogType, LogStatus, StockValue
+)
+
 ORDER_URL = STOCK_URL = PAYMENT_URL = "http://127.0.0.1:8000"
+
+def get_key():
+    try:
+        response = requests.get(f"{GATEWAY_URL}/ids/create")
+    except requests.exceptions.RequestException:
+        abort(400, REQ_ERROR_STR)
+    else:
+        return response.text
+
+########################################################################################################################
+#   LOGGING FUNCTIONS
+########################################################################################################################
+def create_received_from_user_log(log_id: str):
+    received_payload_from_user = LogStockValue(
+        id=log_id,
+        type=LogType.RECEIVED,
+        from_url=None,
+        to_url=None,         # This endpoint
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    # db.set(get_key(), msgpack.encode(received_payload_from_user))
+    # Send reqeust to microservice with data
 
 
 ########################################################################################################################
@@ -20,6 +48,12 @@ def add_stock(item_id: str, amount: int) -> int:
 
 def subtract_stock(item_id: str, amount: int) -> int:
     return requests.post(f"{STOCK_URL}/stock/subtract/{item_id}/{amount}").status_code
+
+def get_stock_log_count() -> dict:
+    return requests.get(f"{STOCK_URL}/stock/log_count").json()
+
+def get_stock_log() -> dict:
+    return requests.get(f"{STOCK_URL}/stock/sorted_logs/1").json()
 
 
 ########################################################################################################################

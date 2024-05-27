@@ -213,6 +213,10 @@ def find_sorted_logs(min_diff: int):
     sorted_logs = sort_logs(logs)
     
     return jsonify(sorted_logs), 200
+
+@app.get('/log_count')
+def get_log_count():
+    return Response(str(len(db.keys("log:*"))), status=200)
     
 ### END OF LOG FUNCTIONS ###
 
@@ -283,7 +287,7 @@ def create_item(price: int):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-    return jsonify({'item_id': item_id, 'log_key': log_key}), 200
+    return jsonify({'item_id': item_id, 'log_id': log_id}), 200
 
 
 # Log Order: RECEIVED -> SENT
@@ -321,12 +325,7 @@ def find_item(item_id: str):
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
     # Return the item
-    return jsonify(
-        {
-            "stock": item_entry.stock,
-            "price": item_entry.price
-        }
-    )
+    return jsonify({"stock": item_entry.stock, "price": item_entry.price, "log_id": log_id}), 200
 
 
 # Log Order: 
@@ -401,7 +400,7 @@ def add_stock(item_id: str, amount: int):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_id}", status=200)
 
 
 # Log Order: 
@@ -492,7 +491,7 @@ def remove_stock(item_id: str, amount: int):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
     
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_id}", status=200)
 
 
 def get_key():
