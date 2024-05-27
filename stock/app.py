@@ -580,8 +580,11 @@ def create_log_entry(log_id: int):
             
 @app.post('/put_anything/<id>/<anything>')           
 def just_put_anything_in(id, anything):
-    anything = turn_log_string_to_log(anything)
-    db.set(id, msgpack.encode(anything))
+    if "LogStockValue" in anything:
+        anything = turn_log_string_to_log(anything)
+    elif "StockValue" in anything:
+        anything = turn_stock_string_to_stock(anything)
+        db.set(id, msgpack.encode(anything))
     return jsonify({"msg": "Done"}), 200
 
 @app.get('/get_anything/<id>')
@@ -589,6 +592,13 @@ def get_anything(id):
     item = db.get(id)
     item = msgpack.decode(item)
     return jsonify({"msg": item}), 200
+
+
+def turn_stock_string_to_stock(stock_str: str):
+    separated = stock_str.split(", ")
+    stock = int(separated[0].split("=")[1])
+    price = int(separated[1].split("=")[1].strip(")"))
+    return StockValue(stock, price)
 
 
 def turn_log_string_to_log(log_str: str):
@@ -603,8 +613,9 @@ def turn_log_string_to_log(log_str: str):
     from_url = None if "None" in separated[7].split("=")[1].replace("'", "") else separated[7].split("=")[1].replace("'", "")
     to_url = None if "None" in separated[8].split("=")[1].replace("'", "") else separated[8].split("=")[1].replace("'", "")   
     
+    app.logger.debug(new_stock)
+    
     logvalue = LogStockValue(log_id, date, logtype, logstatus, stock_id, old_stock, new_stock, from_url, to_url)
-    app.logger.debug(logvalue)
     return logvalue
 
     

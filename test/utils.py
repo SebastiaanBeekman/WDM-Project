@@ -29,7 +29,7 @@ def create_received_from_user_log(log_id: str):
     
 def create_item_replacement(item_id: str, stock_value: StockValue, log_id: str):
     # Create a log entry for the create request
-    create_payload = LogStockValue(
+    return LogStockValue(
         id=log_id,
         type=LogType.CREATE,
         stock_id=item_id,

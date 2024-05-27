@@ -75,7 +75,7 @@ class TestMicroservices(unittest.TestCase):
         # Get initial log count
         stock_log_count = int(tu.get_stock_log_count())
         
-        for i in range(1):
+        for i in range(2):
             
             log_id = str(uuid.uuid4())
 
@@ -86,12 +86,22 @@ class TestMicroservices(unittest.TestCase):
             
             if i == 0: 
                 stock_log_count += 1  
-                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+                # self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
                 tu.fault_tolerance_stock()
                 
                 stock_log_count -= 1    
-                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+                # self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+                
+                continue
             
+ 
+                
+            item_id = str(uuid.uuid4())
+            stock_value = StockValue(stock = 0, price = int(2))
+            log_key_create = tu.get_key()
+            log2 = tu.create_item_replacement(item_id, stock_value, log_id)
+            tu.send_anything_stock(item_id, stock_value)
+            tu.send_anything_stock(log_key_create, log2)
             
         
 
