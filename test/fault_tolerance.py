@@ -82,11 +82,15 @@ class TestMicroservices(unittest.TestCase):
             # Create a log entry for the receive request
             log_key_receive = tu.get_key()
             received_payload_from_user = tu.create_received_from_user_log(log_id)
-            tu.send_anything(log_key_receive, received_payload_from_user)
+            tu.send_anything_stock(log_key_receive, received_payload_from_user)
             stock_log_count += 1
             
             # Fault Tollerance: CRASH - Undo
             if i == 0:
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+                tu.fault_tolerance_stock()
+                stock_log_count -= 1
+                
                 self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
                 
 

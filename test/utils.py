@@ -63,11 +63,14 @@ def get_stock_log_count() -> dict:
 def get_stock_log() -> dict:
     return requests.get(f"{STOCK_URL}/stock/sorted_logs/1").json()
 
-def send_anything(id, anything):
+def send_anything_stock(id, anything):
     return requests.post(f"{STOCK_URL}/stock/put_anything/{id}/{anything}")
 
-def get_anything(id):
+def get_anything_stock(id):
     return requests.get(f"{STOCK_URL}/stock/get_anything/{id}").json()["msg"]
+
+def fault_tolerance_stock():
+    return requests.post(f"{STOCK_URL}/stock/fault_tolerance")
 
 
 ########################################################################################################################

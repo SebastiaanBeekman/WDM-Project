@@ -575,6 +575,13 @@ def get_anything(id):
     item = db.get(id)
     item = msgpack.decode(item)
     return jsonify({"msg": item}), 200
+
+
+@app.post("/fix_faults")
+def fix_faults():
+    app.logger.debug("Fixing faults")
+    fix_fault_tollerance()
+    return jsonify({"msg": "Faults fixed"}), 200
             
     
 # scheduler = BackgroundScheduler()
