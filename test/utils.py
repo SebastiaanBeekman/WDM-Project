@@ -1,25 +1,21 @@
 import requests
+from msgspec import msgpack
 
-import datetime
+from datetime import datetime
 from class_utils import (
     LogStockValue, LogType, LogStatus, StockValue
 )
 
-ORDER_URL = STOCK_URL = PAYMENT_URL = "http://127.0.0.1:8000"
+ORDER_URL = STOCK_URL = PAYMENT_URL = IDS_URL = "http://127.0.0.1:8000"
 
 def get_key():
-    try:
-        response = requests.get(f"{GATEWAY_URL}/ids/create")
-    except requests.exceptions.RequestException:
-        abort(400, REQ_ERROR_STR)
-    else:
-        return response.text
+    return requests.get(f"{IDS_URL}/ids/create").text
 
 ########################################################################################################################
-#   LOGGING FUNCTIONS
+#   LOGGING FUNCTIONS, I guess not really anymore sorry
 ########################################################################################################################
 def create_received_from_user_log(log_id: str):
-    received_payload_from_user = LogStockValue(
+    return LogStockValue(
         id=log_id,
         type=LogType.RECEIVED,
         from_url=None,
@@ -27,8 +23,20 @@ def create_received_from_user_log(log_id: str):
         status=LogStatus.PENDING,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
+    
     # db.set(get_key(), msgpack.encode(received_payload_from_user))
     # Send reqeust to microservice with data
+    
+def create_item_replacement(item_id: str, stock_value: StockValue, log_id: str):
+    # Create a log entry for the create request
+    create_payload = LogStockValue(
+        id=log_id,
+        type=LogType.CREATE,
+        stock_id=item_id,
+        new_stockvalue=stock_value,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    
 
 
 ########################################################################################################################
@@ -54,6 +62,12 @@ def get_stock_log_count() -> dict:
 
 def get_stock_log() -> dict:
     return requests.get(f"{STOCK_URL}/stock/sorted_logs/1").json()
+
+def send_anything(id, anything):
+    return requests.post(f"{STOCK_URL}/stock/put_anything/{id}/{anything}")
+
+def get_anything(id):
+    return requests.get(f"{STOCK_URL}/stock/get_anything/{id}").json()["msg"]
 
 
 ########################################################################################################################

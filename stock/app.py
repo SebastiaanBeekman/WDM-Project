@@ -562,6 +562,19 @@ def fix_fault_tollerance(min_diff: int = 5):
                 db.set(log_stock_id, msgpack.encode(StockValue(stock=log_stock_old["stock"], price=log_stock_old["price"])))
             
             db.delete(log_entry["id"])
+       
+            
+@app.post('/put_anything/<id>/<anything>')           
+def just_put_anything_in(id, anything):
+    app.logger.debug(f"Anything: {anything}, id: {id}")
+    db.set(id, msgpack.encode(anything))
+    return jsonify({"msg": "Done"}), 200
+
+@app.get('/get_anything/<id>')
+def get_anything(id):
+    item = db.get(id)
+    item = msgpack.decode(item)
+    return jsonify({"msg": item}), 200
             
     
 # scheduler = BackgroundScheduler()

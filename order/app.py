@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response, url_for, request
+from flask import Flask, jsonify, abort, Response, request
 from datetime import datetime
 
 
@@ -221,6 +221,26 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
         return logs
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
+    
+    
+def sort_logs(logs: list[dict]):
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
+    
+    return log_dict
+
+@app.get('/sorted_logs/<min_diff>')
+def find_sorted_logs(min_diff: int):
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, int(min_diff))
+    sorted_logs = sort_logs(logs)
+    
+    return jsonify(sorted_logs), 200    
+
 ### END OF LOG FUNCTIONS ###
 
 # TODO
@@ -641,6 +661,30 @@ def fix_consistency():
         log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["dateTime"])
     
     return log_dict
+
+
+def fix_fault_tollerance(min_diff: int = 5):
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, int(min_diff))
+    sorted_logs = sort_logs(logs)
+    
+    for _, log_list in sorted_logs.items():
+        last_log = log_list[-1]["log"]
+        if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
+            continue
+        
+        for log_entry in reversed(log_list):
+            log = log_entry["log"]
+            
+            log_type = log["type"]
+            log_stock_id = log["order_id"]
+            if log_type == LogType.CREATE:
+                db.delete(log_stock_id)
+            elif log_type == LogType.UPDATE:
+                log_stock_old = log["order_value"]["old"]
+                db.set(log_stock_id, msgpack.encode(OrderValue(stock=log_stock_old["stock"], price=log_stock_old["price"])))
+            
+            db.delete(log_entry["id"])
         
 
 
@@ -651,3 +695,5 @@ else:
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
     # app.logger.setLevel(logging.DEBUG)
+    
+    # fix_fault_tollerance()

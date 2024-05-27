@@ -2,6 +2,10 @@ import unittest
 
 import uuid
 import utils as tu
+from class_utils import LogStockValue, LogType, LogStatus, StockValue
+from datetime import datetime
+from msgspec import msgpack
+
 
 class TestMicroservices(unittest.TestCase):
     
@@ -72,57 +76,32 @@ class TestMicroservices(unittest.TestCase):
         stock_log_count = int(tu.get_stock_log_count())
         
         for i in range(4):
+            
             log_id = str(uuid.uuid4())
 
             # Create a log entry for the receive request
-            tu.create_received_from_user_log(log_id)
-
-            item_id = str(uuid.uuid4())
-
-            # Create a log entry for the create request
-            create_payload = LogStockValue(
-                id=log_id,
-                type=LogType.CREATE,
-                stock_id=item_id,
-                new_stockvalue=stock_value,
-                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-            )
-
-            # Set the log entry and the updated item in the pipeline
-            log_key = get_key()
-            pipeline_db.set(log_key, msgpack.encode(create_payload))
-            pipeline_db.set(item_id, msgpack.encode(stock_value))
-            try:
-                pipeline_db.execute()
-            except redis.exceptions.RedisError:
-                error_payload = LogStockValue(
-                    id=log_id,
-                    type=LogType.SENT,
-                    from_url=request.url,       # This endpoint
-                    to_url=request.referrer,    # Endpoint that called this
-                    stock_id=item_id,
-                    status=LogStatus.FAILURE,
-                    dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-                )
-                db.set(get_key(), msgpack.encode(error_payload))
-                
-                pipeline_db.discard()
-                
-                return abort(400, DB_ERROR_STR)
+            log_key_receive = tu.get_key()
+            received_payload_from_user = tu.create_received_from_user_log(log_id)
+            tu.send_anything(log_key_receive, received_payload_from_user)
+            stock_log_count += 1
             
             # Fault Tollerance: CRASH - Undo
+            if i == 0:
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+                
 
-            # Create a log entry for the sent response back to the user
-            sent_payload_to_user = LogStockValue(
-                id=log_id,
-                type=LogType.SENT,
-                from_url=request.url,       # This endpoint
-                to_url=request.referrer,    # Endpoint that called this
-                stock_id=item_id,
-                status=LogStatus.SUCCESS,
-                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-            )
-            db.set(get_key(), msgpack.encode(sent_payload_to_user))
+            # if i >= 1:
+            #     item_id = str(uuid.uuid4())
+            #     stock_value = StockValue(stock = 0, price = int(2))
+
+            #     # Set the log entry and the updated item in the pipeline
+            #     log_key_create = tu.get_key()
+                
+            #     tu.create_item_replacement(log_key_create, item_id, stock_value, log_id)
+            #     stock_log_count += 1
+            
+
+
 
 
 if __name__ == '__main__':
