@@ -8,6 +8,7 @@ import requests
 from enum import Enum
 from copy import deepcopy
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, url_for, request
@@ -186,6 +187,38 @@ def get_all_logs_from(number: int):
         logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
 
         return jsonify({'logs': logs}), 200
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+    
+def find_all_logs_time(time: datetime, min_diff: int = 5):
+    try:
+        # Calculate the range
+        lower_bound: datetime = time - timedelta(minutes=min_diff)
+        upper_bound: datetime = time
+
+        # Create a broad pattern to fetch all potential keys
+        broad_pattern = "log:*"
+        # Retrieve all keys matching the broad pattern
+        potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
+
+        # Filter keys based on the regex pattern
+        logs = []
+        for key in potential_keys:
+            timestamp_str = key.split(":")[-1][:20]
+            key_timestamp: datetime = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S%f")
+            
+            if lower_bound > key_timestamp or upper_bound < key_timestamp:
+                continue
+            
+            raw_data = db.get(key)
+            
+            if not raw_data:
+                continue
+                
+            log_entry = msgpack.decode(raw_data, type=LogOrderValue)
+            logs.append({"id": key, "log": format_log_entry(log_entry)})
+
+        return logs
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
 ### END OF LOG FUNCTIONS ###
@@ -585,6 +618,24 @@ def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for orders successful"})
+
+
+@app.get('/log_consistency')
+def fix_consistency():
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, 1)
+    # app.logger.debug(logs)
+    # app.logger.debug(time)
+    
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["dateTime"])
+    
+    return log_dict
+        
 
 
 if __name__ == '__main__':

@@ -335,7 +335,7 @@ def remove_credit(user_id: str, amount: int):
     
     if user_entry.credit < 0:
         # create log entry for the error
-        send_log = LogUserValue(
+        sent_log = LogUserValue(
             id=log_id, 
             type=LogType.SENT,
             status=LogStatus.FAILURE,
@@ -347,7 +347,7 @@ def remove_credit(user_id: str, amount: int):
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
         log_key = get_key()
-        db.set(log_key, msgpack.encode(send_log))
+        db.set(log_key, msgpack.encode(sent_log))
         abort(400, f"User: {user_id} credit cannot get reduced below zero! Log key: {log_key}")
         
     # create log entry for the updated user

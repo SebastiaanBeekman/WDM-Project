@@ -163,6 +163,7 @@ def find_all_logs_from(number: int):
         return abort(500, 'Failed to retrieve logs from the database')
 ### END OF LOG FUNCTIONS ###
 
+# Log Order: RECEIVED -> CREATE -> SENT
 @app.post('/item/create/<price>')
 def create_item(price: int):
     log_id = str(uuid.uuid4())
@@ -216,6 +217,7 @@ def create_item(price: int):
     return jsonify({'item_id': item_id, 'log_key': log_key}), 200
 
 
+# Log Order: RECEIVED -> SENT
 @app.get('/find/<item_id>')
 def find_item(item_id: str):
     log_id: str | None = request.args.get("log_id")
@@ -257,6 +259,7 @@ def find_item(item_id: str):
     )
 
 
+# Log Order: RECEIVED -> UPDATE -> SENT
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
     log_id: str | None = request.args.get("log_id")
@@ -300,21 +303,24 @@ def add_stock(item_id: str, amount: int):
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
 
-# Create a log entry for the sent response back to the user
-sent_payload_to_user = LogStockValue(
-    id=log_id,
-    type=LogType.SENT,
-    from_url=request.url,       # This endpoint
-    to_url=request.referrer,    # Endpoint that called this
-    stock_id=item_id,
-    status=LogStatus.SUCCESS,
-    dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-)
-db.set(get_key(), msgpack.encode(sent_payload_to_user))
+    # Create a log entry for the sent response back to the user
+    sent_payload_to_user = LogStockValue(
+        id=log_id,
+        type=LogType.SENT,
+        from_url=request.url,       # This endpoint
+        to_url=request.referrer,    # Endpoint that called this
+        stock_id=item_id,
+        status=LogStatus.SUCCESS,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
+    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
 
 
+# Log Order: 
+# Success: RECEIVED -> UPDATE -> SENT
+# Failure: RECEIVED -> SENT
 @app.post('/subtract/<item_id>/<amount>')
 def remove_stock(item_id: str, amount: int):
     log_id: str | None = request.args.get("log_id")
@@ -424,6 +430,7 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
 
         # Create a broad pattern to fetch all potential keys
         broad_pattern = "log:*"
+        
         # Retrieve all keys matching the broad pattern
         potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
 
@@ -448,6 +455,8 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
     
+
+@app.get('/log_consistency')
 def test_consistency():
     time: datetime = datetime.now()
     # app.logger.debug(time)
@@ -475,7 +484,7 @@ def fix_consistency():
     for key in log_dict:
         log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["dateTime"])
     
-    # app.logger.debug(log_dict)
+    
     
 scheduler = BackgroundScheduler()
 scheduler.add_job(fix_consistency, 'interval', seconds=30)
