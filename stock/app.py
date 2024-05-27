@@ -536,8 +536,9 @@ def fix_consistency():
 
 @app.get('/fault_tollerance/<min_diff>')
 def test_fault_tollerance(min_diff: int):
-    fix_fault_tollerance(min_diff)
-    return jsonify({"msg": "Fault Tollerance Test"}), 200
+    app.logger.debug("Fault Tollerance")
+    fix_fault_tollerance(int(min_diff))
+    return jsonify({"msg": "Fault Tollerance"}), 200
 
 
 def fix_fault_tollerance(min_diff: int = 5):
@@ -562,26 +563,32 @@ def fix_fault_tollerance(min_diff: int = 5):
                 db.set(log_stock_id, msgpack.encode(StockValue(stock=log_stock_old["stock"], price=log_stock_old["price"])))
             
             db.delete(log_entry["id"])
+            
+@app.post("/log/create/<log_id>")
+def create_log_entry(log_id: int):
+    
+    log_payload = LogStockValue(
+        id=log_id,
+        type=LogType.RECEIVED,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    )
+    
+    db.set(get_key(), msgpack.encode(log_payload))
+    return jsonify({"msg": "Log entry created"}), 200
        
             
-@app.post('/put_anything/<id>/<anything>')           
-def just_put_anything_in(id, anything):
-    app.logger.debug(f"Anything: {anything}, id: {id}")
-    db.set(id, msgpack.encode(anything))
-    return jsonify({"msg": "Done"}), 200
+# @app.post('/put_anything/<id>/<anything>')           
+# def just_put_anything_in(id, anything):
+#     app.logger.debug(f"Anything: {anything}, id: {id}")
+#     db.set(id, msgpack.encode(anything))
+#     return jsonify({"msg": "Done"}), 200
 
-@app.get('/get_anything/<id>')
-def get_anything(id):
-    item = db.get(id)
-    item = msgpack.decode(item)
-    return jsonify({"msg": item}), 200
-
-
-@app.post("/fix_faults")
-def fix_faults():
-    app.logger.debug("Fixing faults")
-    fix_fault_tollerance()
-    return jsonify({"msg": "Faults fixed"}), 200
+# @app.get('/get_anything/<id>')
+# def get_anything(id):
+#     item = db.get(id)
+#     item = msgpack.decode(item)
+#     return jsonify({"msg": item}), 200
             
     
 # scheduler = BackgroundScheduler()

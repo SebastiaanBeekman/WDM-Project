@@ -15,14 +15,14 @@ def get_key():
 #   LOGGING FUNCTIONS, I guess not really anymore sorry
 ########################################################################################################################
 def create_received_from_user_log(log_id: str):
-    return LogStockValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=None,
-        to_url=None,         # This endpoint
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
+    # return LogStockValue(
+    #     id=log_id,
+    #     type=LogType.RECEIVED,
+    #     status=LogStatus.PENDING,
+    #     dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+    # )
+    
+    return requests.post(f"{STOCK_URL}/stock/log/create/{log_id}").json()
     
     # db.set(get_key(), msgpack.encode(received_payload_from_user))
     # Send reqeust to microservice with data
@@ -70,7 +70,7 @@ def get_anything_stock(id):
     return requests.get(f"{STOCK_URL}/stock/get_anything/{id}").json()["msg"]
 
 def fault_tolerance_stock():
-    return requests.post(f"{STOCK_URL}/stock/fault_tolerance")
+    return requests.get(f"{STOCK_URL}/stock/fault_tollerance/1")
 
 
 ########################################################################################################################
