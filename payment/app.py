@@ -6,10 +6,12 @@ import requests
 from enum import Enum
 import redis
 from copy import deepcopy
+from collections import defaultdict
+from ast import literal_eval
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 DB_ERROR_STR = "DB error"
@@ -86,7 +88,9 @@ def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | Non
         abort(400, f"User: {user_id} not found! Log key: {log_key}")
     return entry
 
-### START OF LOG FUNCTIONS ###
+########################################################################################################################
+#   START OF LOG FUNCTIONS
+########################################################################################################################
 def format_log_entry(log_entry: LogUserValue) -> dict:
     return {
         "id": log_entry.id,
@@ -108,6 +112,16 @@ def format_log_entry(log_entry: LogUserValue) -> dict:
         "dateTime": log_entry.dateTime
     }
     
+def sort_logs(logs: list[dict]):
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
+    
+    return log_dict
+
 
 def get_log_from_db(log_key: str) -> LogUserValue | None:
     try:
@@ -120,6 +134,11 @@ def get_log_from_db(log_key: str) -> LogUserValue | None:
     if entry is None:
         abort(400, f"Log: {log_key} not found!")
     return entry
+
+
+@app.get('/log_count')
+def get_log_count():
+    return Response(str(len(db.keys("log:*"))), status=200)
 
 
 @app.get('/log/<log_key>')
@@ -156,8 +175,81 @@ def find_all_logs_from(number: int):
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-### END OF LOG FUNCTIONS ###
+    
+    
+def find_all_logs_time(time: datetime, min_diff: int = 5):
+    try:
+        # Calculate the range
+        lower_bound: datetime = time - timedelta(minutes=min_diff)
+        upper_bound: datetime = time
 
+        # Create a broad pattern to fetch all potential keys
+        broad_pattern = "log:*"
+        
+        # Retrieve all keys matching the broad pattern
+        potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
+
+        # Filter keys based on the regex pattern
+        logs = []
+        for key in potential_keys:
+            timestamp_str = key.split(":")[-1][:20]
+            key_timestamp: datetime = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S%f")
+            
+            if lower_bound > key_timestamp or upper_bound < key_timestamp:
+                continue
+            
+            raw_data = db.get(key)
+            
+            if not raw_data:
+                continue
+                
+            log_entry = msgpack.decode(raw_data, type=LogUserValue)
+            logs.append({"id": key, "log": format_log_entry(log_entry)})
+
+        return logs
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+
+
+@app.get('/sorted_logs/<min_diff>')
+def find_sorted_logs(min_diff: int):
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, int(min_diff))
+    sorted_logs = sort_logs(logs)
+    
+    return jsonify(sorted_logs), 200
+
+
+@app.post('/log/create')
+def create_log():
+    str_dict_log_entry = str(request.get_json())
+    dict_log_entry = literal_eval(str_dict_log_entry)
+    log_entry = LogUserValue(**dict_log_entry)
+    
+    log_key = get_key()
+    db.set(log_key, msgpack.encode(log_entry))
+    
+    return jsonify({"msg": "Log entry created", "log_key": log_key}), 200
+
+########################################################################################################################
+#   START OF BENCHMARK FUNCTIONS
+########################################################################################################################
+@app.post('/create_user/benchmark')
+def create_user_benchmark():    
+    user_id = str(uuid.uuid4())
+    user_value = UserValue(credit=0)
+    
+    try:
+        db.set(user_id, msgpack.encode(user_value))
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    
+    return jsonify({'user_id': user_id}), 200
+
+
+########################################################################################################################
+#   START OF MICROSERVICE FUNCTIONS
+########################################################################################################################
 @app.post('/create_user')
 def create_user():
     log_id = str(uuid.uuid4())

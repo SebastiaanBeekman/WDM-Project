@@ -246,6 +246,7 @@ class TestMicroservices(unittest.TestCase):
             
             stock_log_count -= i+1
             self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+       
             
     def test_stock_subtract_contains_faulty_log(self):
         # Get initial log count
