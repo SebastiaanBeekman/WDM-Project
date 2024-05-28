@@ -239,8 +239,6 @@ def create_log():
 ########################################################################################################################
 #   START OF BENCHMARK FUNCTIONS
 ########################################################################################################################
-
-
 @app.post('/create_user/benchmark')
 def create_user_benchmark():
     user_id = str(uuid.uuid4())
@@ -298,8 +296,6 @@ def remove_credit_benchmark(user_id: str, amount: int):
 ########################################################################################################################
 #   START OF MICROSERVICE FUNCTIONS
 ########################################################################################################################
-
-
 @app.post('/create_user')
 def create_user():
     log_id = str(uuid.uuid4())
@@ -334,7 +330,19 @@ def create_user():
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogUserValue(
+            id=log_id,
+            type=LogType.SENT,
+            user_id=user_id,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
 
     # create log entry for the sent response
@@ -434,7 +442,19 @@ def add_credit(user_id: str, amount: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogUserValue(
+            id=log_id,
+            type=LogType.SENT,
+            user_id=user_id,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
 
     # create log entry for the sent response
@@ -510,7 +530,19 @@ def remove_credit(user_id: str, amount: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogUserValue(
+            id=log_id,
+            type=LogType.SENT,
+            user_id=user_id,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
 
     # Create log entry for the sent response
