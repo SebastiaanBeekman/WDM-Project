@@ -1,41 +1,46 @@
 import requests
 
-import datetime
+from datetime import datetime
 from class_utils import (
     LogStockValue, LogType, LogStatus, StockValue
 )
 
-ORDER_URL = STOCK_URL = PAYMENT_URL = "http://127.0.0.1:8000"
+ORDER_URL = STOCK_URL = PAYMENT_URL = IDS_URL = "http://127.0.0.1:8000"
 
 def get_key():
-    try:
-        response = requests.get(f"{GATEWAY_URL}/ids/create")
-    except requests.exceptions.RequestException:
-        abort(400, REQ_ERROR_STR)
-    else:
-        return response.text
+    return requests.get(f"{IDS_URL}/ids/create").text
 
 ########################################################################################################################
 #   LOGGING FUNCTIONS
 ########################################################################################################################
-def create_received_from_user_log(log_id: str):
-    received_payload_from_user = LogStockValue(
+def create_stock_log(log_id: int, type: LogType, status: LogStatus = None, stock_id: str = None, old_stockvalue: StockValue = None, new_stockvalue: StockValue = None, from_url: str = None, to_url: str = None):
+    log_entry = LogStockValue(
         id=log_id,
-        type=LogType.RECEIVED,
-        from_url=None,
-        to_url=None,         # This endpoint
-        status=LogStatus.PENDING,
+        type=type if type else None,
+        status=status if status else None,
+        stock_id=stock_id if stock_id else None,
+        old_stockvalue=old_stockvalue if old_stockvalue else None,
+        new_stockvalue=new_stockvalue if new_stockvalue else None,
+        from_url=from_url if from_url else None,
+        to_url=to_url if to_url else None,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-    # db.set(get_key(), msgpack.encode(received_payload_from_user))
-    # Send reqeust to microservice with data
-
+   
+    return requests.post(f"{STOCK_URL}/stock/log/create", json=log_entry.to_dict())
 
 ########################################################################################################################
 #   STOCK MICROSERVICE FUNCTIONS
 ########################################################################################################################
+def create_item_benchmark(price: int) -> dict:
+    return requests.post(f"{STOCK_URL}/stock/item/create/{price}/benchmark")
+
+
 def create_item(price: int) -> dict:
     return requests.post(f"{STOCK_URL}/stock/item/create/{price}").json()
+
+
+def find_item_benchmark(item_id: str) -> dict:
+    return requests.get(f"{STOCK_URL}/stock/find/{item_id}/benchmark")
 
 
 def find_item(item_id: str) -> dict:
@@ -49,12 +54,17 @@ def add_stock(item_id: str, amount: int) -> int:
 def subtract_stock(item_id: str, amount: int) -> int:
     return requests.post(f"{STOCK_URL}/stock/subtract/{item_id}/{amount}").status_code
 
+
 def get_stock_log_count() -> dict:
     return requests.get(f"{STOCK_URL}/stock/log_count").json()
+
 
 def get_stock_log() -> dict:
     return requests.get(f"{STOCK_URL}/stock/sorted_logs/1").json()
 
+
+def fault_tolerance_stock():
+    return requests.get(f"{STOCK_URL}/stock/fault_tollerance/1")
 
 ########################################################################################################################
 #   PAYMENT MICROSERVICE FUNCTIONS

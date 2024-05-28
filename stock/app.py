@@ -7,6 +7,7 @@ from enum import Enum
 import redis
 from copy import deepcopy
 from collections import defaultdict
+from ast import literal_eval
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
@@ -89,7 +90,9 @@ def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | No
         return abort(400, f"Item: {item_id} not found! Log key: {log_key}")
     return entry
 
-### START OF LOG FUNCTIONS ###
+########################################################################################################################
+#   START OF LOG FUNCTIONS
+########################################################################################################################
 def format_log_entry(log_entry: LogStockValue) -> dict:
     return {
         "id": log_entry.id,
@@ -114,6 +117,17 @@ def format_log_entry(log_entry: LogStockValue) -> dict:
     }
 
 
+def sort_logs(logs: list[dict]):
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
+    
+    return log_dict
+
+
 def get_log_from_db(log_id: str) -> LogStockValue | None:
     try:
         entry: bytes = db.get(log_id)
@@ -125,6 +139,10 @@ def get_log_from_db(log_id: str) -> LogStockValue | None:
     if entry is None:
         abort(400, f"Log: {log_id} not found!")
     return entry
+
+@app.get('/log_count')
+def get_log_count():
+    return Response(str(len(db.keys("log:*"))), status=200)
 
 
 @app.get('/log/<log_id>')
@@ -196,16 +214,6 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
         return abort(500, 'Failed to retrieve logs from the database')
 
 
-def sort_logs(logs: list[dict]):
-    log_dict = defaultdict(list)
-    for log in logs:
-        log_dict[log["log"]["id"]].append(log)
-    
-    for key in log_dict:
-        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
-    
-    return log_dict
-
 @app.get('/sorted_logs/<min_diff>')
 def find_sorted_logs(min_diff: int):
     time: datetime = datetime.now()
@@ -214,12 +222,47 @@ def find_sorted_logs(min_diff: int):
     
     return jsonify(sorted_logs), 200
 
-@app.get('/log_count')
-def get_log_count():
-    return Response(str(len(db.keys("log:*"))), status=200)
-    
-### END OF LOG FUNCTIONS ###
 
+@app.post('/log/create')
+def create_log():
+    str_dict_log_entry = str(request.get_json())
+    dict_log_entry = literal_eval(str_dict_log_entry)
+    log_entry = LogStockValue(**dict_log_entry)
+    
+    log_key = get_key()
+    db.set(log_key, msgpack.encode(log_entry))
+    
+    return jsonify({"msg": "Log entry created", "log_key": log_key}), 200
+
+########################################################################################################################
+#   START OF BENCHMARK FUNCTIONS
+########################################################################################################################
+@app.post('/item/create/<price>/benchmark')
+def create_item_benchmark(price: int):
+    item_id = str(uuid.uuid4())
+    stock_value = StockValue(stock=0, price=int(price))
+    
+    try:
+        db.set(item_id, msgpack.encode(stock_value))
+    except redis.exceptions.RedisError:        
+        return abort(400, DB_ERROR_STR)
+
+    return jsonify({'item_id': item_id}), 200
+
+
+@app.get('/find/<item_id>/benchmark')
+def find_item_benchmark(item_id: str):
+    entry: bytes = db.get(item_id)
+    item_entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
+
+    if item_entry is None:
+        return abort(400, f"Item: {item_id} not found!")
+
+    return jsonify({"stock": item_entry.stock, "price": item_entry.price}), 200
+
+########################################################################################################################
+#   START OF MICROSERVICE FUNCTIONS
+########################################################################################################################
 # Log Order: 
 # Success: RECEIVED -> CREATE -> SENT (success)
 # Failure: RECEIVED -> SENT (error)
@@ -536,8 +579,8 @@ def fix_consistency():
 
 @app.get('/fault_tollerance/<min_diff>')
 def test_fault_tollerance(min_diff: int):
-    fix_fault_tollerance(min_diff)
-    return jsonify({"msg": "Fault Tollerance Test"}), 200
+    fix_fault_tollerance(int(min_diff))
+    return jsonify({"msg": "Fault Tollerance Successful"}), 200
 
 
 def fix_fault_tollerance(min_diff: int = 5):
@@ -562,12 +605,8 @@ def fix_fault_tollerance(min_diff: int = 5):
                 db.set(log_stock_id, msgpack.encode(StockValue(stock=log_stock_old["stock"], price=log_stock_old["price"])))
             
             db.delete(log_entry["id"])
-            
     
-# scheduler = BackgroundScheduler()
-# scheduler.add_job(fix_consistency, 'interval', seconds=30)
-# scheduler.start()
-
+    
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
 else:

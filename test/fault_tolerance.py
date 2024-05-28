@@ -2,9 +2,11 @@ import unittest
 
 import uuid
 import utils as tu
+from class_utils import LogStockValue, LogType, LogStatus, StockValue
+
 
 class TestMicroservices(unittest.TestCase):
-    
+
     def test_stock_contains_no_faulty_logs(self):
         # Get initial log count
         stock_log_count = int(tu.get_stock_log_count())
@@ -70,59 +72,93 @@ class TestMicroservices(unittest.TestCase):
     def test_stock_create_contains_faulty_log(self):
         # Get initial log count
         stock_log_count = int(tu.get_stock_log_count())
+        self.assertIsNotNone(stock_log_count)
         
-        for i in range(4):
+        for i in range(2):
             log_id = str(uuid.uuid4())
+            price = 5
+            endpoint_url = f"{tu.STOCK_URL}/stock/item/create/{price}"
 
-            # Create a log entry for the receive request
-            tu.create_received_from_user_log(log_id)
-
-            item_id = str(uuid.uuid4())
-
-            # Create a log entry for the create request
-            create_payload = LogStockValue(
-                id=log_id,
-                type=LogType.CREATE,
-                stock_id=item_id,
-                new_stockvalue=stock_value,
-                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-            )
-
-            # Set the log entry and the updated item in the pipeline
-            log_key = get_key()
-            pipeline_db.set(log_key, msgpack.encode(create_payload))
-            pipeline_db.set(item_id, msgpack.encode(stock_value))
-            try:
-                pipeline_db.execute()
-            except redis.exceptions.RedisError:
-                error_payload = LogStockValue(
-                    id=log_id,
-                    type=LogType.SENT,
-                    from_url=request.url,       # This endpoint
-                    to_url=request.referrer,    # Endpoint that called this
-                    stock_id=item_id,
-                    status=LogStatus.FAILURE,
-                    dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+            # Create an entry for the receive from user log
+            if i >= 0:
+                log1_resp = tu.create_stock_log(
+                    log_id=log_id,
+                    type=LogType.RECEIVED,
+                    from_url="BENCHMARK",
+                    to_url=endpoint_url,
+                    status=LogStatus.PENDING,
                 )
-                db.set(get_key(), msgpack.encode(error_payload))
+                self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
                 
-                pipeline_db.discard()
-                
-                return abort(400, DB_ERROR_STR)
+                stock_log_count += 1
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
             
-            # Fault Tollerance: CRASH - Undo
-
-            # Create a log entry for the sent response back to the user
-            sent_payload_to_user = LogStockValue(
-                id=log_id,
-                type=LogType.SENT,
-                from_url=request.url,       # This endpoint
-                to_url=request.referrer,    # Endpoint that called this
-                stock_id=item_id,
-                status=LogStatus.SUCCESS,
-                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-            )
-            db.set(get_key(), msgpack.encode(sent_payload_to_user))
+            # Create an item with the given price
+            if i >= 1:
+                item1_resp = tu.create_item_benchmark(price)
+                self.assertTrue(tu.status_code_is_success(item1_resp.status_code))
+                
+                item1_id = item1_resp.json()['item_id']
+                stock_value = StockValue(stock=0, price=int(price))
+                
+                find_item1_resp = tu.find_item_benchmark(item1_id)
+                self.assertTrue(tu.status_code_is_success(find_item1_resp.status_code))
+                self.assertEqual(find_item1_resp.json()['price'], price)
+            
+            # Create an entry for the error log (Unused as the log is finished properly when this is present)
+            # if i == 1:
+            #     log2_resp = tu.create_stock_log(
+            #         log_id=log_id,
+            #         type=LogType.SENT,
+            #         from_url=endpoint_url,
+            #         to_url="BENCHMARK",
+            #         stock_id=item1_id,
+            #         status=LogStatus.FAILURE,
+            #     )
+            #     self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+                
+            #     stock_log_count += 1
+            #     self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            # Create an entry for the create log
+            if i >= 1:
+                log3_resp = tu.create_stock_log(
+                    log_id=log_id,
+                    type=LogType.CREATE,
+                    stock_id=item1_id,
+                    new_stockvalue=stock_value,
+                )
+                self.assertTrue(tu.status_code_is_success(log3_resp.status_code))
+                
+                stock_log_count += 1
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            # Create an entry for the sent to user log (Unused as the log is finished properly when this is present)
+            # if i >= 3:
+            #     log4_resp = tu.create_stock_log(
+            #         log_id=log_id,
+            #         type=LogType.SENT,
+            #         from_url=endpoint_url,
+            #         to_url="BENCHMARK",
+            #         stock_id=item1_id,
+            #         status=LogStatus.SUCCESS,
+            #         old_stockvalue=stock_value,
+            #     )
+            #     self.assertTrue(tu.status_code_is_success(log4_resp.status_code))
+                
+            #     stock_log_count += 1
+            #     self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            ft_resp = tu.fault_tolerance_stock()
+            self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+            
+            stock_log_count -= i+1
+            self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+            
+            # Check whether item was deleted
+            if i >= 1:
+                find_item1_resp = tu.find_item_benchmark(item1_id)
+                self.assertTrue(tu.status_code_is_failure(find_item1_resp.status_code))
 
 
 if __name__ == '__main__':
