@@ -260,6 +260,30 @@ def find_item_benchmark(item_id: str):
 
     return jsonify({"stock": item_entry.stock, "price": item_entry.price}), 200
 
+@app.post('/add/<item_id>/<amount>/benchmark')
+def add_stock_benchmark(item_id: str, amount: int):
+    item_entry: StockValue = get_item_from_db(item_id)
+    item_entry.stock += int(amount)
+    
+    try:
+        db.set(item_id, msgpack.encode(item_entry))
+    except redis.exceptions.RedisError:        
+        return abort(400, DB_ERROR_STR)
+
+    return jsonify({"stock": item_entry.stock}), 200
+
+@app.post('/subtract/<item_id>/<amount>/benchmark')
+def remove_stock_benchmark(item_id: str, amount: int):
+    item_entry: StockValue = get_item_from_db(item_id)
+    item_entry.stock -= int(amount)
+    
+    try:
+        db.set(item_id, msgpack.encode(item_entry))
+    except redis.exceptions.RedisError:        
+        return abort(400, DB_ERROR_STR)
+
+    return jsonify({"stock": item_entry.stock}), 200
+
 ########################################################################################################################
 #   START OF MICROSERVICE FUNCTIONS
 ########################################################################################################################

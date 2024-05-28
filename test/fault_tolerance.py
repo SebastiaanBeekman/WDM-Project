@@ -2,8 +2,7 @@ import unittest
 
 import uuid
 import utils as tu
-from class_utils import LogStockValue, LogType, LogStatus, StockValue
-
+from class_utils import LogType, LogStatus, StockValue
 
 class TestMicroservices(unittest.TestCase):
 
@@ -67,7 +66,7 @@ class TestMicroservices(unittest.TestCase):
         last_subtract_log = stock_log[item1['log_id']][-1]["log"]
         self.assertEqual(last_subtract_log['type'], "Sent")
         self.assertEqual(last_subtract_log["status"], "Success")
-        
+
 
     def test_stock_create_contains_faulty_log(self):
         # Get initial log count
@@ -160,6 +159,155 @@ class TestMicroservices(unittest.TestCase):
                 find_item1_resp = tu.find_item_benchmark(item1_id)
                 self.assertTrue(tu.status_code_is_failure(find_item1_resp.status_code))
 
+
+    def test_stock_find_contains_faulty_log(self):
+        # Get initial log count
+        stock_log_count = int(tu.get_stock_log_count())
+        self.assertIsNotNone(stock_log_count)
+        
+        log_id = str(uuid.uuid4())
+
+        # Create an entry for the receive from user log
+        log1_resp = tu.create_stock_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url="BENCHMARK",
+            to_url=f"{tu.STOCK_URL}/stock/find/{log_id}",
+            stock_id=str(uuid.uuid4()),
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+        
+        stock_log_count += 1
+        self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+        
+        ft_resp = tu.fault_tolerance_stock()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        stock_log_count -= 1
+        self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+
+
+    def test_stock_add_contains_faulty_log(self):
+        # Get initial log count
+        stock_log_count = int(tu.get_stock_log_count())
+        self.assertIsNotNone(stock_log_count)
+        
+        for i in range(2):
+            log_id = str(uuid.uuid4())
+            amount = 5
+            
+            item_entry = tu.create_item_benchmark(amount)
+            self.assertTrue(tu.status_code_is_success(item_entry.status_code))
+            
+            item_id = item_entry.json()['item_id']
+            endpoint_url = f"{tu.STOCK_URL}/stock/add/{item_id}/{amount}"
+
+            # Create an entry for the receive from user log
+            if i >= 0:
+                log1_resp = tu.create_stock_log(
+                    log_id=log_id,
+                    type=LogType.RECEIVED,
+                    from_url="BENCHMARK",
+                    to_url=endpoint_url,
+                    stock_id=item_id,
+                    status=LogStatus.PENDING,
+                )
+                self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+                
+                stock_log_count += 1
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            # Update the stock of the item
+            if i >= 1:
+                add_stock_resp = tu.add_stock_benchmark(item_id, amount)
+                self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
+                
+                find_item_resp = tu.find_item_benchmark(item_id)
+                self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
+                self.assertEqual(find_item_resp.json()['stock'], amount)
+                
+            # Create an entry for the update log
+            if i >= 1:
+                log2_resp = tu.create_stock_log(
+                    log_id=log_id,
+                    type=LogType.UPDATE,
+                    stock_id=item_id,
+                    old_stockvalue=StockValue(stock=0, price=amount),
+                    new_stockvalue=StockValue(stock=amount, price=amount),
+                )
+                self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+                
+                stock_log_count += 1
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            ft_resp = tu.fault_tolerance_stock()
+            self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+            
+            stock_log_count -= i+1
+            self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+            
+    def test_stock_subtract_contains_faulty_log(self):
+        # Get initial log count
+        stock_log_count = int(tu.get_stock_log_count())
+        self.assertIsNotNone(stock_log_count)
+        
+        for i in range(2):
+            log_id = str(uuid.uuid4())
+            amount = 5
+            
+            item_entry = tu.create_item_benchmark(amount)
+            self.assertTrue(tu.status_code_is_success(item_entry.status_code))
+            
+            item_id = item_entry.json()['item_id']
+            endpoint_url = f"{tu.STOCK_URL}/stock/subtract/{item_id}/{amount}"
+            
+            add_stock_resp = tu.add_stock_benchmark(item_id, amount)
+            self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
+            
+            # Create an entry for the receive from user log
+            if i >= 0:
+                log1_resp = tu.create_stock_log(
+                    log_id=log_id,
+                    type=LogType.RECEIVED,
+                    from_url="BENCHMARK",
+                    to_url=endpoint_url,
+                    stock_id=item_id,
+                    status=LogStatus.PENDING,
+                )
+                self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+                
+                stock_log_count += 1
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            # Update the stock of the item
+            if i >= 1:
+                add_stock_resp = tu.subtract_stock_benchmark(item_id, amount)
+                self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
+                
+                find_item_resp = tu.find_item_benchmark(item_id)
+                self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
+                self.assertEqual(find_item_resp.json()['stock'], 0)
+                
+            # Create an entry for the update log
+            if i >= 1:
+                log2_resp = tu.create_stock_log(
+                    log_id=log_id,
+                    type=LogType.UPDATE,
+                    stock_id=item_id,
+                    old_stockvalue=StockValue(stock=amount, price=amount),
+                    new_stockvalue=StockValue(stock=0, price=amount),
+                )
+                self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+                
+                stock_log_count += 1
+                self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+            
+            ft_resp = tu.fault_tolerance_stock()
+            self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+            
+            stock_log_count -= i+1
+            self.assertEqual(tu.get_stock_log_count(), stock_log_count)
 
 if __name__ == '__main__':
     unittest.main()

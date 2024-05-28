@@ -47,8 +47,16 @@ def find_item(item_id: str) -> dict:
     return requests.get(f"{STOCK_URL}/stock/find/{item_id}").json()
 
 
+def add_stock_benchmark(item_id: str, amount: int) -> int:
+    return requests.post(f"{STOCK_URL}/stock/add/{item_id}/{amount}/benchmark")
+
+
 def add_stock(item_id: str, amount: int) -> int:
     return requests.post(f"{STOCK_URL}/stock/add/{item_id}/{amount}").status_code
+
+
+def subtract_stock_benchmark(item_id: str, amount: int) -> int:
+    return requests.post(f"{STOCK_URL}/stock/subtract/{item_id}/{amount}/benchmark")
 
 
 def subtract_stock(item_id: str, amount: int) -> int:
