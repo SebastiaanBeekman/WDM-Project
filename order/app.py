@@ -302,7 +302,7 @@ def create_order(user_id: str):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
     
-    return jsonify({'order_id': order_id, 'log_key': log_key}), 200
+    return jsonify({'order_id': order_id, 'log_id': log_id}), 200
 
 
 @app.get('/find/<order_id>')
@@ -343,7 +343,8 @@ def find_order(order_id: str):
             "paid": order_entry.paid,
             "items": order_entry.items,
             "user_id": order_entry.user_id,
-            "total_cost": order_entry.total_cost
+            "total_cost": order_entry.total_cost,
+            "log_id": log_id
         }
     )
 
