@@ -835,7 +835,7 @@ def fix_fault_tolerance(min_diff: int = 5):
                 db.delete(log_order_id)
             elif log_type == LogType.UPDATE:
                 log_order_old = log["order_value"]["old"]
-                db.set(log_order_id, msgpack.encode(OrderValue(**log_order_old)))
+                db.set(log_order_id, msgpack.encode(OrderValue(paid=log_order_old["paid"], items=log_order_old["items"], user_id=log_order_old["user_id"], total_cost=log_order_old["total_cost"])))
             
             db.delete(log_entry["id"])
         
