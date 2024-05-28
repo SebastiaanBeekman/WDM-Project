@@ -100,7 +100,7 @@ def format_log_entry(log_entry: LogUserValue) -> dict:
         "type": log_entry.type,
         "status": log_entry.status,
         "user_id": log_entry.user_id,
-        "userValue": {
+        "user_value": {
             "old": {
                 "credit": log_entry.old_uservalue.credit if log_entry.old_uservalue else None
             },
