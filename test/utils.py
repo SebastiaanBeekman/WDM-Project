@@ -120,7 +120,6 @@ def add_credit_to_user(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}").status_code
 
 
-
 def add_credit_to_user_benchmark(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}/benchmark")
 ########################################################################################################################
@@ -128,6 +127,10 @@ def add_credit_to_user_benchmark(user_id: str, amount: float) -> int:
 ########################################################################################################################
 def create_order(user_id: str) -> dict:
     return requests.post(f"{ORDER_URL}/orders/create/{user_id}").json()
+
+
+def create_order_benchmark(user_id: str) -> dict:
+    return requests.post(f"{ORDER_URL}/orders/create/{user_id}/benchmark")
 
 
 def add_item_to_order(order_id: str, item_id: str, quantity: int) -> int:
@@ -138,31 +141,24 @@ def find_order(order_id: str) -> dict:
     return requests.get(f"{ORDER_URL}/orders/find/{order_id}").json()
 
 
+def find_order_benchmark(order_id: str) -> dict:
+    return requests.get(f"{ORDER_URL}/orders/find/{order_id}/benchmark")
+
+
 def get_order_log() -> dict:
     return requests.get(f"{ORDER_URL}/orders/sorted_logs/1").json()
-
-
-def get_order_log_count() -> dict:
-    return requests.get(f"{ORDER_URL}/orders/log_count").json()
 
 
 def checkout_order(order_id: str) -> requests.Response:
     return requests.post(f"{ORDER_URL}/orders/checkout/{order_id}")
 
 
+def get_order_log_count() -> dict:
+    return requests.get(f"{ORDER_URL}/orders/log_count").json()
+
+
 def fault_tolerance_order():
-    return requests.get(f"{ORDER_URL}/orders/fault_tollerance/1")
-
-def create_order_benchmark(user_id: str) -> dict:
-    return requests.post(f"{ORDER_URL}/orders/create/{user_id}/benchmark")
-
-def find_order_benchmark(order_id: str) -> dict:
-    return requests.get(f"{ORDER_URL}/orders/find/{order_id}/benchmark")
-
-def fault_tolerance_order() -> dict:
-    return requests.get(f"{ORDER_URL}/orders/fault_tollerance/1")
-    
-
+    return requests.get(f"{ORDER_URL}/orders/fault_tolerance/1")
 
 ########################################################################################################################
 #   STATUS CHECKS

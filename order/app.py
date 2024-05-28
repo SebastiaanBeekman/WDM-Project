@@ -124,7 +124,7 @@ def format_log_entry(log_entry: LogOrderValue) -> dict:
         "type": log_entry.type,
         "status": log_entry.status,
         "order_id": log_entry.order_id,
-        "orderValue": {
+        "order_value": {
             "old": {
                 "paid": log_entry.old_ordervalue.paid if log_entry.old_ordervalue else None,
                 "items": log_entry.old_ordervalue.items if log_entry.old_ordervalue else None,
@@ -350,17 +350,17 @@ def create_order(user_id: str):
     )
     db.set(get_key(), msgpack.encode(received_payload_from_payment))
     
-    # if payment_reply.status_code != 200:
-        # error_payload = LogOrderValue(
-        #     id=log_id,
-        #     type=LogType.SENT,
-        #     from_url=request.url,
-        #     to_url=request.referrer,
-        #     status=LogStatus.FAILURE,
-        #     dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
-        # )
-        # db.set(get_key(), msgpack.encode(error_payload))
-        # return abort(400, f"User: {user_id} does not exist!")
+    if payment_reply.status_code != 200:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        return abort(400, f"User: {user_id} does not exist!")
     
     order_id = str(uuid.uuid4())
     order_value = OrderValue(
@@ -503,7 +503,16 @@ def add_item(order_id: str, item_id: str, quantity: int):
 
     # Request failed because item does not exist
     if stock_reply.status_code != 200:
-        abort(400, f"Item: {item_id} does not exist!")
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        return abort(400, f"Item: {item_id} does not exist!")
 
     # Locally update the order value
     order_entry: OrderValue = get_order_from_db(order_id)
@@ -786,8 +795,6 @@ def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
 def fix_consistency():
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, 1)
-    # app.logger.debug(logs)
-    # app.logger.debug(time)
     
     log_dict = defaultdict(list)
     for log in logs:
@@ -816,19 +823,19 @@ def fix_fault_tolerance(min_diff: int = 5):
         if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
             continue
             
-        if "http://order-app/checkout/" in last_log["url"]["from"]:
-            continue
+        # if "http://order-app/checkout/" in last_log["url"]["from"]:
+        #     continue
         
         for log_entry in reversed(log_list):
             log = log_entry["log"]
             
             log_type = log["type"]
-            log_stock_id = log["order_id"]
+            log_order_id = log["order_id"]
             if log_type == LogType.CREATE:
-                db.delete(log_stock_id)
+                db.delete(log_order_id)
             elif log_type == LogType.UPDATE:
-                log_stock_old = log["order_value"]["old"]
-                db.set(log_stock_id, msgpack.encode(OrderValue(stock=log_stock_old["stock"], price=log_stock_old["price"])))
+                log_order_old = log["order_value"]["old"]
+                db.set(log_order_id, msgpack.encode(OrderValue(**log_order_old)))
             
             db.delete(log_entry["id"])
         

@@ -69,7 +69,6 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_add_log['type'], "Sent")
         self.assertEqual(last_add_log["status"], "Success")
         
-        
         # Test checkout
         checkout_response = tu.checkout_order(order1['order_id']).status_code
         self.assertTrue(tu.status_code_is_success(checkout_response))
@@ -84,7 +83,6 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_checkout_log["status"], "Success")
         
         tu.fault_tolerance_order()
-        
         self.assertEqual(int(tu.get_order_log_count()), order_log_count)
         
         
@@ -156,8 +154,146 @@ class TestMicroservices(unittest.TestCase):
                 self.assertTrue(tu.status_code_is_failure(find_order1_resp.status_code))
 
 
-
+    def test_order_find_contains_faulty_log(self):
+        # Get initial log count
+        order_log_count = int(tu.get_order_log_count())
+        self.assertIsNotNone(order_log_count)
         
+        user_entry = tu.create_user_benchmark()
+        self.assertTrue(tu.status_code_is_success(user_entry.status_code))
+        
+        order_entry = tu.create_order_benchmark(user_entry.json()['user_id'])
+        self.assertTrue(tu.status_code_is_success(order_entry.status_code))
+        
+        log_id = str(uuid.uuid4())
+        order_id = order_entry.json()['order_id']
+        
+        # Create an entry for the receive from user log
+        log1_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url="BENCHMARK",
+            to_url=f"{tu.ORDER_URL}/orders/find/{order_id}",
+            order_id=order_id,
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+        
+        order_log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+        
+        ft_resp = tu.fault_tolerance_order()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        order_log_count -= 1
+        self.assertEqual(tu.get_order_log_count(), order_log_count)
+        
+    
+    def test_order_add_item_contains_faulty_log(self):
+        # Get initial log count
+        order_log_count = int(tu.get_order_log_count())
+        self.assertIsNotNone(order_log_count)
+        
+        i2_error = True
+        
+        for i in range(4):
+            log_id = str(uuid.uuid4())
+            quantity = 3
+            price = 2
+            
+            # Create a user
+            user_entry = tu.create_user_benchmark()
+            self.assertTrue(tu.status_code_is_success(user_entry.status_code))
+            
+            # Create an order
+            order_entry = tu.create_order_benchmark(user_entry.json()['user_id'])
+            self.assertTrue(tu.status_code_is_success(order_entry.status_code))
+            
+            # Create an item
+            item_entry = tu.create_item_benchmark(price)
+            self.assertTrue(tu.status_code_is_success(item_entry.status_code))
+            
+            user_id = user_entry.json()['user_id']
+            order_id = order_entry.json()['order_id']
+            item_id = item_entry.json()['item_id']
+            endpoint_url = f"{tu.ORDER_URL}/orders/add/item/{order_id}/{item_id}/{quantity}"
+            
+            # Create an entry for the receive from user log
+            if i >= 0:
+                log1_resp = tu.create_order_log(
+                    log_id=log_id,
+                    type=LogType.RECEIVED,
+                    from_url="BENCHMARK",
+                    to_url=endpoint_url,
+                    status=LogStatus.PENDING,
+                )
+                self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+                
+                order_log_count += 1
+                self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+            
+            request_url = f"{tu.STOCK_URL}/stock/find/{item_id}"
+            
+            # Create an entry for the sent to stock log
+            if i >= 1:
+                log2_resp = tu.create_order_log(
+                    log_id=log_id,
+                    type=LogType.SENT,
+                    from_url=endpoint_url,
+                    to_url=request_url,
+                    status=LogStatus.PENDING,
+                )
+                self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+                
+                order_log_count += 1
+                self.assertEqual(int(tu.get_order_log_count()), order_log_count)        
+            
+            if i >= 2:
+                if i2_error: # Create an entry for the received from stock log (failure)
+                    log3_resp = tu.create_order_log(
+                    log_id=log_id,
+                    type=LogType.RECEIVED,
+                    from_url=request_url,
+                    to_url=endpoint_url,
+                    status=LogStatus.FAILURE,
+                )
+                    self.assertTrue(tu.status_code_is_success(log3_resp.status_code))
+                    
+                    order_log_count += 1
+                    self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+                    i2_error = False
+                else: # Create an entry for the received from stock log (success)
+                    log4_resp = tu.create_order_log(
+                        log_id=log_id,
+                        type=LogType.RECEIVED,
+                        from_url=request_url,
+                        to_url=endpoint_url,
+                        status=LogStatus.SUCCESS,
+                    )
+                    self.assertTrue(tu.status_code_is_success(log4_resp.status_code))
+                    
+                    order_log_count += 1
+                    self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+            
+            # Create an entry for the update log
+            if i >= 3:
+                log5_resp = tu.create_order_log(
+                    log_id=log_id,
+                    type=LogType.UPDATE,
+                    order_id=order_id,
+                    old_ordervalue=OrderValue(user_id=user_id, paid=False, items=[], total_cost=0),
+                    new_ordervalue=OrderValue(user_id=user_id, paid=False, items=[(item_id, int(quantity))], total_cost=price*quantity),
+                )
+                self.assertTrue(tu.status_code_is_success(log5_resp.status_code))
+                
+                order_log_count += 1
+                self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+            
+            ft_resp = tu.fault_tolerance_order()
+            self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+            
+            order_log_count -= i+1
+            self.assertEqual(tu.get_order_log_count(), order_log_count)
         
 if __name__ == '__main__':
     unittest.main()

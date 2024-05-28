@@ -135,15 +135,19 @@ class TestMicroservices(unittest.TestCase):
         stock_log_count = int(tu.get_stock_log_count())
         self.assertIsNotNone(stock_log_count)
         
+        item_entry = tu.create_item_benchmark(5)
+        self.assertTrue(tu.status_code_is_success(item_entry.status_code))
+        
         log_id = str(uuid.uuid4())
+        item_id = item_entry.json()['item_id']
 
         # Create an entry for the receive from user log
         log1_resp = tu.create_stock_log(
             log_id=log_id,
             type=LogType.RECEIVED,
             from_url="BENCHMARK",
-            to_url=f"{tu.STOCK_URL}/stock/find/{log_id}",
-            stock_id=str(uuid.uuid4()),
+            to_url=f"{tu.STOCK_URL}/stock/find/{item_id}",
+            stock_id=item_id,
             status=LogStatus.PENDING,
         )
         self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
@@ -216,6 +220,7 @@ class TestMicroservices(unittest.TestCase):
             
             stock_log_count -= i+1
             self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+            
             
     def test_stock_subtract_contains_faulty_log(self):
         # Get initial log count

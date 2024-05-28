@@ -593,8 +593,6 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
 def fix_consistency():
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, 1)
-    # app.logger.debug(logs)
-    # app.logger.debug(time)
     
     log_dict = defaultdict(list)
     for log in logs:
