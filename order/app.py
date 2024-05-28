@@ -168,9 +168,11 @@ def get_log_from_db(log_id: str) -> LogOrderValue | None:
         abort(400, f"Log: {log_id} not found!")
     return entry
 
+
 @app.get('/log_count')
 def get_log_count():
     return Response(str(len(db.keys("log:*"))), status=200)
+
 
 @app.get('/log/<log_id>')
 def find_log(log_id: str):
@@ -206,7 +208,8 @@ def find_all_logs_from(number: int):
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-    
+
+
 def find_all_logs_time(time: datetime, min_diff: int = 5):
     try:
         # Calculate the range
@@ -238,6 +241,7 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
         return logs
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
+
 
 @app.get('/sorted_logs/<min_diff>')
 def find_sorted_logs(min_diff: int):
@@ -317,7 +321,7 @@ def create_order(user_id: str):
     db.set(get_key(), msgpack.encode(received_payload_from_user))
     
     # Check if user exists
-    request_url = f"{GATEWAY_URL}/payment/find/{user_id}"
+    request_url = f"{GATEWAY_URL}/payment/find_user/{user_id}"
     sent_payload_to_payment = LogOrderValue(
         id=log_id,
         type=LogType.SENT,
@@ -330,6 +334,7 @@ def create_order(user_id: str):
 
     # Send the request
     payment_reply = send_get_request(request_url, log_id)
+    app.logger.debug(payment_reply)
 
     # Create a log entry for the received response (success or failure) from the stock service
     received_payload_from_payment = LogOrderValue(
@@ -804,6 +809,8 @@ def fix_fault_tollerance(min_diff: int = 5):
     
     for _, log_list in sorted_logs.items():
         last_log = log_list[-1]["log"]
+        # if last_log["from_log"] == 
+        
         if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
             continue
         
