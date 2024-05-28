@@ -334,7 +334,6 @@ def create_order(user_id: str):
 
     # Send the request
     payment_reply = send_get_request(request_url, log_id)
-    app.logger.debug(payment_reply)
 
     # Create a log entry for the received response (success or failure) from the stock service
     received_payload_from_payment = LogOrderValue(
@@ -796,22 +795,24 @@ def fix_consistency():
     return log_dict
 
 
-@app.get('/fault_tollerance/<min_diff>')
-def test_fault_tollerance(min_diff: int):
-    fix_fault_tollerance(int(min_diff))
+@app.get('/fault_tolerance/<min_diff>')
+def test_fault_tolerance(min_diff: int):
+    fix_fault_tolerance(int(min_diff))
     return jsonify({"msg": "Fault Tollerance Successful"}), 200
 
 
-def fix_fault_tollerance(min_diff: int = 5):
+def fix_fault_tolerance(min_diff: int = 5):
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, int(min_diff))
     sorted_logs = sort_logs(logs)
     
     for _, log_list in sorted_logs.items():
         last_log = log_list[-1]["log"]
-        # if last_log["from_log"] == 
         
         if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
+            continue
+            
+        if "http://order-app/checkout/" in last_log["url"]["from"]:
             continue
         
         for log_entry in reversed(log_list):
@@ -837,4 +838,4 @@ else:
     # app.logger.setLevel(gunicorn_logger.level)
     app.logger.setLevel(logging.DEBUG)
     
-    # fix_fault_tollerance()
+    # fix_fault_tolerance()

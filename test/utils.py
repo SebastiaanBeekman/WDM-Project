@@ -87,7 +87,7 @@ def get_stock_log() -> dict:
 
 
 def fault_tolerance_stock():
-    return requests.get(f"{STOCK_URL}/stock/fault_tollerance/1")
+    return requests.get(f"{STOCK_URL}/stock/fault_tolerance/1")
 
 ########################################################################################################################
 #   PAYMENT MICROSERVICE FUNCTIONS
