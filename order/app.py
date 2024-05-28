@@ -292,7 +292,11 @@ def find_order_benchmark(order_id: str):
 @app.post('/addItem/<order_id>/<item_id>/<quantity>/benchmark')
 def add_item_benchmark(order_id: str, item_id: str, quantity: int):
     order_entry: OrderValue = db.get(order_id)
+    
+    item_json = send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}/benchmark").json()
+    
     order_entry.items.append((item_id, int(quantity)))
+    order_entry.total_cost += int(quantity) * item_json["price"]
     
     try:
         db.set(order_id, msgpack.encode(order_entry))
