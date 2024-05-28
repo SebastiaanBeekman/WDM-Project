@@ -117,7 +117,6 @@ class TestMicroservices(unittest.TestCase):
                 stock_log_count += 1
                 self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
             
-            
             ft_resp = tu.fault_tolerance_stock()
             self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
             
@@ -220,6 +219,7 @@ class TestMicroservices(unittest.TestCase):
             
             stock_log_count -= i+1
             self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+     
             
             
     def test_stock_subtract_contains_faulty_log(self):

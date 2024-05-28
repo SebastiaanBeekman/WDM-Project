@@ -2,10 +2,14 @@ import requests
 
 from datetime import datetime
 from class_utils import (
-    LogStockValue, LogType, LogStatus, StockValue, OrderValue, LogOrderValue
+    LogType, LogStatus, 
+    StockValue, LogStockValue,
+    OrderValue, LogOrderValue,
+    UserValue, LogUserValue
 )
 
 ORDER_URL = STOCK_URL = PAYMENT_URL = IDS_URL = "http://127.0.0.1:8000"
+
 
 def get_key():
     return requests.get(f"{IDS_URL}/ids/create").text
@@ -13,6 +17,8 @@ def get_key():
 ########################################################################################################################
 #   LOGGING FUNCTIONS
 ########################################################################################################################
+
+
 def create_stock_log(log_id: int, type: LogType, status: LogStatus = None, stock_id: str = None, old_stockvalue: StockValue = None, new_stockvalue: StockValue = None, from_url: str = None, to_url: str = None):
     log_entry = LogStockValue(
         id=log_id,
@@ -25,10 +31,26 @@ def create_stock_log(log_id: int, type: LogType, status: LogStatus = None, stock
         to_url=to_url if to_url else None,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
-   
+
     return requests.post(f"{STOCK_URL}/stock/log/create", json=log_entry.to_dict())
 
+  
+def create_payment_log(log_id: int, type: LogType, status: LogStatus = None, user_id: str = None, old_uservalue: UserValue = None, new_uservalue: UserValue = None, from_url: str = None, to_url: str = None):
+    log_entry = LogUserValue(
+        id=log_id,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        type=type,
+        status=status,
+        user_id=user_id,
+        old_uservalue=old_uservalue,
+        new_uservalue=new_uservalue,
+        from_url=from_url,
+        to_url=to_url,
+    )
 
+    return requests.post(f"{PAYMENT_URL}/payment/log/create", json=log_entry.to_dict())
+
+  
 def create_order_log(log_id: int, type: LogType, status: LogStatus = None, order_id: str = None, old_ordervalue: OrderValue = None, new_ordervalue: OrderValue = None, from_url: str = None, to_url: str = None):
     log_entry = LogOrderValue(
         id=log_id,
@@ -46,6 +68,7 @@ def create_order_log(log_id: int, type: LogType, status: LogStatus = None, order
 ########################################################################################################################
 #   STOCK MICROSERVICE FUNCTIONS
 ########################################################################################################################
+
 def create_item_benchmark(price: int) -> dict:
     return requests.post(f"{STOCK_URL}/stock/item/create/{price}/benchmark")
 
@@ -89,9 +112,11 @@ def get_stock_log() -> dict:
 def fault_tolerance_stock():
     return requests.get(f"{STOCK_URL}/stock/fault_tolerance/1")
 
+
 ########################################################################################################################
 #   PAYMENT MICROSERVICE FUNCTIONS
 ########################################################################################################################
+
 def payment_pay(user_id: str, amount: int) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/pay/{user_id}/{amount}").status_code
 
@@ -122,9 +147,24 @@ def add_credit_to_user(user_id: str, amount: float) -> int:
 
 def add_credit_to_user_benchmark(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}/benchmark")
+
+
+def get_payment_log_count() -> dict:
+    return requests.get(f"{PAYMENT_URL}/payment/log_count").json()
+
+
+def get_payment_log() -> dict:
+    return requests.get(f"{PAYMENT_URL}/payment/sorted_logs/1").json()
+
+
+def fault_tolerance_payment():
+    return requests.get(f"{PAYMENT_URL}/payment/fault_tolerance/1")
+
+
 ########################################################################################################################
 #   ORDER MICROSERVICE FUNCTIONS
 ########################################################################################################################
+
 def create_order(user_id: str) -> dict:
     return requests.post(f"{ORDER_URL}/orders/create/{user_id}").json()
 
@@ -163,6 +203,7 @@ def fault_tolerance_order():
 ########################################################################################################################
 #   STATUS CHECKS
 ########################################################################################################################
+
 def status_code_is_success(status_code: int) -> bool:
     return 200 <= status_code < 300
 
