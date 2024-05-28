@@ -9,6 +9,7 @@ from enum import Enum
 from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta
+from ast import literal_eval
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
@@ -242,14 +243,59 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
 def find_sorted_logs(min_diff: int):
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, int(min_diff))
-    app.logger.debug(logs)
     sorted_logs = sort_logs(logs)
     
     return jsonify(sorted_logs), 200    
 
+
+@app.post("/log/create")
+def create_log():
+    str_dict_log_entry = str(request.get_json())
+    dict_log_entry = literal_eval(str_dict_log_entry)
+    log_entry = LogOrderValue(**dict_log_entry)
+    
+    log_key = get_key()
+    db.set(log_key, msgpack.encode(log_entry))
+    
+    return jsonify({"msg": "Log entry created", "log_key": log_key}), 200
+
 ########################################################################################################################
 #   START OF BENCHMARK FUNCTIONS
 ########################################################################################################################
+@app.post('/create/<user_id>/benchmark')
+def create_order_benchmark(user_id: str):
+    order_id = str(uuid.uuid4())
+    order_value = OrderValue(user_id=user_id, total_cost=0, items=[], paid=False)
+    
+    try:
+        db.set(order_id, msgpack.encode(order_value))
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    
+    return jsonify({"order_id": order_id}), 200
+
+
+@app.get('/find/<order_id>/benchmark')
+def find_order_benchmark(order_id: str):
+    entry: OrderValue = db.get(order_id)
+    order_entry: OrderValue | None = msgpack.decode(entry, type=OrderValue) if entry else None
+    
+    if order_entry is None:
+        return abort(400, f"Order: {order_id} not found!")
+    
+    return jsonify({"user_id": order_entry.user_id, "total_cost": order_entry.total_cost, "items": order_entry.items, "paid": order_entry.paid}), 200
+
+@app.post('/addItem/<order_id>/<item_id>/<quantity>/benchmark')
+def add_item_benchmark(order_id: str, item_id: str, quantity: int):
+    order_entry: OrderValue = db.get(order_id)
+    order_entry.items.append((item_id, int(quantity)))
+    
+    try:
+        db.set(order_id, msgpack.encode(order_entry))
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    
+    return jsonify({"order_id": order_id, "total_cost": order_entry.total_cost}), 200
 
 
 ########################################################################################################################
@@ -296,17 +342,17 @@ def create_order(user_id: str):
     )
     db.set(get_key(), msgpack.encode(received_payload_from_payment))
     
-    if payment_reply.status_code != 200:
-        error_payload = LogOrderValue(
-            id=log_id,
-            type=LogType.SENT,
-            from_url=request.url,
-            to_url=request.referrer,
-            status=LogStatus.FAILURE,
-            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
-        )
-        db.set(get_key(), msgpack.encode(error_payload))
-        return abort(400, f"User: {user_id} does not exist!")
+    # if payment_reply.status_code != 200:
+        # error_payload = LogOrderValue(
+        #     id=log_id,
+        #     type=LogType.SENT,
+        #     from_url=request.url,
+        #     to_url=request.referrer,
+        #     status=LogStatus.FAILURE,
+        #     dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        # )
+        # db.set(get_key(), msgpack.encode(error_payload))
+        # return abort(400, f"User: {user_id} does not exist!")
     
     order_id = str(uuid.uuid4())
     order_value = OrderValue(
