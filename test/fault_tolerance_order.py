@@ -14,6 +14,10 @@ class TestMicroservices(unittest.TestCase):
         user_id = tu.create_user_benchmark().json()
         self.assertIn('user_id', user_id)
         
+        # Add credit
+        credit_added = tu.add_credit_to_user_benchmark(user_id, 100).json()
+        self.assertIn('credit', credit_added)
+        
         # Test /order/create
         order1: dict = tu.create_order(user_id)
         self.assertIn('order_id', order1)
