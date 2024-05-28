@@ -277,6 +277,9 @@ def remove_stock_benchmark(item_id: str, amount: int):
     item_entry: StockValue = get_item_from_db(item_id)
     item_entry.stock -= int(amount)
     
+    if item_entry.stock < 0:
+        return abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
+    
     try:
         db.set(item_id, msgpack.encode(item_entry))
     except redis.exceptions.RedisError:        
