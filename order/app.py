@@ -154,6 +154,9 @@ def get_log_from_db(log_id: str) -> LogOrderValue | None:
         abort(400, f"Log: {log_id} not found!")
     return entry
 
+@app.get('/log_count')
+def get_log_count():
+    return Response(str(len(db.keys("log:*"))), status=200)
 
 @app.get('/log/<log_id>')
 def find_log(log_id: str):
@@ -661,6 +664,12 @@ def fix_consistency():
         log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["dateTime"])
     
     return log_dict
+
+
+@app.get('/fault_tollerance/<min_diff>')
+def test_fault_tollerance(min_diff: int):
+    fix_fault_tollerance(int(min_diff))
+    return jsonify({"msg": "Fault Tollerance Successful"}), 200
 
 
 def fix_fault_tollerance(min_diff: int = 5):

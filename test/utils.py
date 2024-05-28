@@ -107,7 +107,6 @@ def add_credit_to_user(user_id: str, amount: float) -> int:
 
 def add_credit_to_user_benchmark(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}/benchmark")
-
 ########################################################################################################################
 #   ORDER MICROSERVICE FUNCTIONS
 ########################################################################################################################
@@ -121,6 +120,10 @@ def add_item_to_order(order_id: str, item_id: str, quantity: int) -> int:
 
 def find_order(order_id: str) -> dict:
     return requests.get(f"{ORDER_URL}/orders/find/{order_id}").json()
+
+
+def get_order_log_count() -> dict:
+    return requests.get(f"{ORDER_URL}/orders/log_count").json()
 
 
 def checkout_order(order_id: str) -> requests.Response:
