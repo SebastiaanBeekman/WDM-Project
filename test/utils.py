@@ -81,22 +81,33 @@ def payment_pay(user_id: str, amount: int) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/pay/{user_id}/{amount}").status_code
 
 
+def payment_pay_benchmark(user_id: str, amount: int) -> int:
+    return requests.post(f"{PAYMENT_URL}/payment/pay/{user_id}/{amount}/benchmark")
+
+
 def create_user() -> dict:
     return requests.post(f"{PAYMENT_URL}/payment/create_user").json()
+
+
+def create_user_benchmark() -> dict:
+    return requests.post(f"{PAYMENT_URL}/payment/create_user/benchmark")
 
 
 def find_user(user_id: str) -> dict:
     return requests.get(f"{PAYMENT_URL}/payment/find_user/{user_id}").json()
 
 
+def find_user_benchmark(user_id: str) -> dict:
+    return requests.get(f"{PAYMENT_URL}/payment/find_user/{user_id}/benchmark")
+
+
 def add_credit_to_user(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}").status_code
 
 
-def create_user_benchmark() -> dict:
-    return requests.post(f"{PAYMENT_URL}/payment/create_user/benchmark").json()
 
-
+def add_credit_to_user_benchmark(user_id: str, amount: float) -> int:
+    return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}/benchmark")
 ########################################################################################################################
 #   ORDER MICROSERVICE FUNCTIONS
 ########################################################################################################################

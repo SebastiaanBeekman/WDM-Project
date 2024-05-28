@@ -247,6 +247,46 @@ def create_user_benchmark():
     return jsonify({'user_id': user_id}), 200
 
 
+@app.get('/find_user/<user_id>/benchmark')
+def find_user_benchmark(user_id: str):
+    entry: bytes = db.get(user_id)
+    user_entry: UserValue | None = msgpack.decode(entry, type=UserValue) if entry else None
+
+    if user_entry is None:
+        return abort(400, f"Item: {user_id} not found!")
+
+    return jsonify({"user_id": user_id, "credit": user_entry.credit}), 200
+
+
+@app.post('/add_funds/<user_id>/<amount>/benchmark')
+def add_credit_benchmark(user_id: str, amount: int):
+    user_entry: UserValue = get_user_from_db(user_id)
+    user_entry.credit += int(amount)
+    
+    try:
+        db.set(user_id, msgpack.encode(user_entry))
+    except redis.exceptions.RedisError:
+        pipeline_db.discard()
+        return abort(400, DB_ERROR_STR)
+    
+    return jsonify({"credit": user_entry.credit}), 200
+
+@app.post('/pay/<user_id>/<amount>/benchmark')
+def remove_credit_benchmark(user_id: str, amount: int):
+    user_entry: UserValue = get_user_from_db(user_id)
+    user_entry.credit -= int(amount)
+    
+    if user_entry.credit < 0:
+        abort(400, f"User: {user_id} credit cannot get reduced below zero!")
+    
+    try:
+        db.set(user_id, msgpack.encode(user_entry))
+    except redis.exceptions.RedisError:
+        pipeline_db.discard()
+        return abort(400, DB_ERROR_STR)
+    
+    return jsonify({"credit": user_entry.credit}), 200
+
 ########################################################################################################################
 #   START OF MICROSERVICE FUNCTIONS
 ########################################################################################################################
