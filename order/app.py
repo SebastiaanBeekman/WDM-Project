@@ -139,7 +139,7 @@ def format_log_entry(log_entry: LogOrderValue) -> dict:
             "from": log_entry.from_url,
             "to": log_entry.to_url
         },
-        "dateTime": log_entry.dateTime,
+        "date_time": log_entry.dateTime,
     }
 
 

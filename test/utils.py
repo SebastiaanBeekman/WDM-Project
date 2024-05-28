@@ -92,6 +92,7 @@ def find_user(user_id: str) -> dict:
 def add_credit_to_user(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}").status_code
 
+
 def create_user_benchmark() -> dict:
     return requests.post(f"{PAYMENT_URL}/payment/create_user/benchmark").json()
 
@@ -109,6 +110,10 @@ def add_item_to_order(order_id: str, item_id: str, quantity: int) -> int:
 
 def find_order(order_id: str) -> dict:
     return requests.get(f"{ORDER_URL}/orders/find/{order_id}").json()
+
+
+def get_order_log() -> dict:
+    return requests.get(f"{ORDER_URL}/orders/sorted_logs/1").json()
 
 
 def get_order_log_count() -> dict:
