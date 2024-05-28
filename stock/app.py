@@ -66,7 +66,6 @@ class LogStockValue(Struct):
     to_url: str | None = None    
 
 
-
 def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | None:
     try:
         entry: bytes = db.get(item_id)

@@ -114,7 +114,9 @@ def get_order_from_db(order_id: str, log_id: str | None = None) -> OrderValue | 
         abort(400, f"Order: {order_id} not found! Log key: {log_key}")
     return entry
 
-### START OF LOG FUNCTIONS ###
+########################################################################################################################
+#   START OF LOG FUNCTIONS
+########################################################################################################################
 def format_log_entry(log_entry: LogOrderValue) -> dict:
     return {
         "id": log_entry.id,
@@ -141,6 +143,17 @@ def format_log_entry(log_entry: LogOrderValue) -> dict:
         },
         "date_time": log_entry.dateTime,
     }
+    
+
+def sort_logs(logs: list[dict]):
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
+    
+    return log_dict
 
 
 def get_log_from_db(log_id: str) -> LogOrderValue | None:
@@ -166,7 +179,7 @@ def find_log(log_id: str):
 
 
 @app.get('/logs')
-def get_all_logs():
+def find_all_logs():
     try:
         # Retrieve all keys starting with "log:" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
@@ -180,7 +193,7 @@ def get_all_logs():
 
 
 @app.get('/logs_from/<number>')
-def get_all_logs_from(number: int):
+def find_all_logs_from(number: int):
     """This function is still broken."""
     try:
         # Retrieve all keys starting with "log:" from Redis
@@ -224,30 +237,24 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
         return logs
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-    
-    
-def sort_logs(logs: list[dict]):
-    log_dict = defaultdict(list)
-    for log in logs:
-        log_dict[log["log"]["id"]].append(log)
-    
-    for key in log_dict:
-        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
-    
-    return log_dict
 
 @app.get('/sorted_logs/<min_diff>')
 def find_sorted_logs(min_diff: int):
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, int(min_diff))
+    app.logger.debug(logs)
     sorted_logs = sort_logs(logs)
     
     return jsonify(sorted_logs), 200    
 
-### END OF LOG FUNCTIONS ###
+########################################################################################################################
+#   START OF BENCHMARK FUNCTIONS
+########################################################################################################################
 
-# TODO
-# Add user_id check
+
+########################################################################################################################
+#   START OF MICROSERVICE FUNCTIONS
+########################################################################################################################
 @app.post('/create/<user_id>')
 def create_order(user_id: str):
     log_id = str(uuid.uuid4())
@@ -262,6 +269,44 @@ def create_order(user_id: str):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_key(), msgpack.encode(received_payload_from_user))
+    
+    # Check if user exists
+    request_url = f"{GATEWAY_URL}/payment/find/{user_id}"
+    sent_payload_to_payment = LogOrderValue(
+        id=log_id,
+        type=LogType.SENT,
+        from_url=request.url,
+        to_url=request_url,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_key(), msgpack.encode(sent_payload_to_payment))
+
+    # Send the request
+    payment_reply = send_get_request(request_url, log_id)
+
+    # Create a log entry for the received response (success or failure) from the stock service
+    received_payload_from_payment = LogOrderValue(
+        id=log_id,
+        type=LogType.RECEIVED,
+        from_url=request_url,
+        to_url=request.url,
+        status=LogStatus.SUCCESS if payment_reply.status_code == 200 else LogStatus.FAILURE,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_key(), msgpack.encode(received_payload_from_payment))
+    
+    if payment_reply.status_code != 200:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        return abort(400, f"User: {user_id} does not exist!")
     
     order_id = str(uuid.uuid4())
     order_value = OrderValue(
@@ -287,7 +332,18 @@ def create_order(user_id: str):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
     
     # Fault Tollerance: CRASH - Undo
@@ -419,7 +475,18 @@ def add_item(order_id: str, item_id: str, quantity: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
     
     # Fault Tollerance - Crash, undo
@@ -596,7 +663,18 @@ def checkout(order_id: str):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
 
     # Create a log for the sent response
@@ -703,7 +781,7 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    app.logger.setLevel(gunicorn_logger.level)
-    # app.logger.setLevel(logging.DEBUG)
+    # app.logger.setLevel(gunicorn_logger.level)
+    app.logger.setLevel(logging.DEBUG)
     
     # fix_fault_tollerance()
