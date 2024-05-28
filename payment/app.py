@@ -603,7 +603,7 @@ def fix_fault_tolerance(min_diff: int = 5):
                 db.delete(log_user_id)
             elif log_type == LogType.UPDATE:
                 # raise ValueError(f"HERE {log.keys()}")
-                log_user_old = log["userValue"]["old"]
+                log_user_old = log["user_value"]["old"]
                 db.set(log_user_id, msgpack.encode(UserValue(credit=log_user_old["credit"])))
 
             db.delete(log_entry["id"])

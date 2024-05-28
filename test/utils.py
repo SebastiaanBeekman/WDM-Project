@@ -35,7 +35,7 @@ def create_stock_log(log_id: int, type: LogType, status: LogStatus = None, stock
     return requests.post(f"{STOCK_URL}/stock/log/create", json=log_entry.to_dict())
 
   
-def create_payment_log(log_id: int, type: LogType, status: LogStatus = None, user_id: str = None, old_uservalue: StockValue = None, new_uservalue: StockValue = None, from_url: str = None, to_url: str = None):
+def create_payment_log(log_id: int, type: LogType, status: LogStatus = None, user_id: str = None, old_uservalue: UserValue = None, new_uservalue: UserValue = None, from_url: str = None, to_url: str = None):
     log_entry = LogUserValue(
         id=log_id,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
