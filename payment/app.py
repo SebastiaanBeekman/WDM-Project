@@ -97,7 +97,7 @@ def format_log_entry(log_entry: LogUserValue) -> dict:
         "type": log_entry.type,
         "status": log_entry.status,
         "user_id": log_entry.user_id,
-        "userValue": {
+        "user_value": {
             "old": {
                 "credit": log_entry.old_uservalue.credit if log_entry.old_uservalue else None
             },
@@ -109,7 +109,7 @@ def format_log_entry(log_entry: LogUserValue) -> dict:
             "from": log_entry.from_url,
             "to": log_entry.to_url
         },
-        "dateTime": log_entry.dateTime
+        "date_time": log_entry.dateTime
     }
     
 def sort_logs(logs: list[dict]):

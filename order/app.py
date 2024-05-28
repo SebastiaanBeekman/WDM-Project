@@ -801,7 +801,7 @@ def fix_consistency():
         log_dict[log["log"]["id"]].append(log)
     
     for key in log_dict:
-        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["dateTime"])
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
     
     return log_dict
 
