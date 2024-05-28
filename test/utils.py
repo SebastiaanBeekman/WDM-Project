@@ -130,6 +130,18 @@ def add_credit_to_user_benchmark(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}/benchmark")
 
 
+def get_payment_log_count() -> dict:
+    return requests.get(f"{PAYMENT_URL}/payment/log_count").json()
+
+
+def get_payment_log() -> dict:
+    return requests.get(f"{PAYMENT_URL}/payment/sorted_logs/1").json()
+
+
+def fault_tolerance_payment():
+    return requests.get(f"{PAYMENT_URL}/payment/fault_tolerance/1")
+
+
 ########################################################################################################################
 #   ORDER MICROSERVICE FUNCTIONS
 ########################################################################################################################

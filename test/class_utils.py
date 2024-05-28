@@ -61,6 +61,9 @@ class LogStockValue(Struct):
 class UserValue(Struct):
     credit: int
 
+    def to_dict(self):
+        return {f: getattr(self, f) for f in self.__struct_fields__}
+
 
 class LogUserValue(Struct):
     id: str
