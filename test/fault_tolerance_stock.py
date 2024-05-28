@@ -104,21 +104,6 @@ class TestMicroservices(unittest.TestCase):
                 self.assertTrue(tu.status_code_is_success(find_item1_resp.status_code))
                 self.assertEqual(find_item1_resp.json()['price'], price)
             
-            # Create an entry for the error log (Unused as the log is finished properly when this is present)
-            # if i == 1:
-            #     log2_resp = tu.create_stock_log(
-            #         log_id=log_id,
-            #         type=LogType.SENT,
-            #         from_url=endpoint_url,
-            #         to_url="BENCHMARK",
-            #         stock_id=item1_id,
-            #         status=LogStatus.FAILURE,
-            #     )
-            #     self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
-                
-            #     stock_log_count += 1
-            #     self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
-            
             # Create an entry for the create log
             if i >= 1:
                 log3_resp = tu.create_stock_log(
@@ -132,21 +117,6 @@ class TestMicroservices(unittest.TestCase):
                 stock_log_count += 1
                 self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
             
-            # Create an entry for the sent to user log (Unused as the log is finished properly when this is present)
-            # if i >= 3:
-            #     log4_resp = tu.create_stock_log(
-            #         log_id=log_id,
-            #         type=LogType.SENT,
-            #         from_url=endpoint_url,
-            #         to_url="BENCHMARK",
-            #         stock_id=item1_id,
-            #         status=LogStatus.SUCCESS,
-            #         old_stockvalue=stock_value,
-            #     )
-            #     self.assertTrue(tu.status_code_is_success(log4_resp.status_code))
-                
-            #     stock_log_count += 1
-            #     self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
             
             ft_resp = tu.fault_tolerance_stock()
             self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
@@ -165,15 +135,19 @@ class TestMicroservices(unittest.TestCase):
         stock_log_count = int(tu.get_stock_log_count())
         self.assertIsNotNone(stock_log_count)
         
+        item_entry = tu.create_item_benchmark(5)
+        self.assertTrue(tu.status_code_is_success(item_entry.status_code))
+        
         log_id = str(uuid.uuid4())
+        item_id = item_entry.json()['item_id']
 
         # Create an entry for the receive from user log
         log1_resp = tu.create_stock_log(
             log_id=log_id,
             type=LogType.RECEIVED,
             from_url="BENCHMARK",
-            to_url=f"{tu.STOCK_URL}/stock/find/{log_id}",
-            stock_id=str(uuid.uuid4()),
+            to_url=f"{tu.STOCK_URL}/stock/find/{item_id}",
+            stock_id=item_id,
             status=LogStatus.PENDING,
         )
         self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
@@ -246,6 +220,7 @@ class TestMicroservices(unittest.TestCase):
             
             stock_log_count -= i+1
             self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+            
             
     def test_stock_subtract_contains_faulty_log(self):
         # Get initial log count

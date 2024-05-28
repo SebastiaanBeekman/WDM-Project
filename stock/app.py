@@ -66,7 +66,6 @@ class LogStockValue(Struct):
     to_url: str | None = None    
 
 
-
 def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | None:
     try:
         entry: bytes = db.get(item_id)
@@ -594,8 +593,6 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
 def fix_consistency():
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, 1)
-    # app.logger.debug(logs)
-    # app.logger.debug(time)
     
     log_dict = defaultdict(list)
     for log in logs:
@@ -604,13 +601,13 @@ def fix_consistency():
     for key in log_dict:
         log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
 
-@app.get('/fault_tollerance/<min_diff>')
-def test_fault_tollerance(min_diff: int):
-    fix_fault_tollerance(int(min_diff))
+@app.get('/fault_tolerance/<min_diff>')
+def test_fault_tolerance(min_diff: int):
+    fix_fault_tolerance(int(min_diff))
     return jsonify({"msg": "Fault Tollerance Successful"}), 200
 
 
-def fix_fault_tollerance(min_diff: int = 5):
+def fix_fault_tolerance(min_diff: int = 5):
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, int(min_diff))
     sorted_logs = sort_logs(logs)
@@ -642,5 +639,5 @@ else:
     # app.logger.setLevel(gunicorn_logger.level)
     app.logger.setLevel(logging.DEBUG)
     
-    # fix_fault_tollerance()
+    # fix_fault_tolerance()
     
