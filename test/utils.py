@@ -92,10 +92,6 @@ def find_user(user_id: str) -> dict:
 def add_credit_to_user(user_id: str, amount: float) -> int:
     return requests.post(f"{PAYMENT_URL}/payment/add_funds/{user_id}/{amount}").status_code
 
-def create_user_benchmark() -> dict:
-    return requests.post(f"{PAYMENT_URL}/payment/create_user/benchmark").json()
-
-
 ########################################################################################################################
 #   ORDER MICROSERVICE FUNCTIONS
 ########################################################################################################################
