@@ -68,7 +68,6 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_pay_log['type'], "Sent")
         self.assertEqual(last_pay_log["status"], "Success")
 
-
     def test_payment_create_contains_faulty_log(self):
         # Get initial log count
         payment_log_count = int(tu.get_payment_log_count())
@@ -97,7 +96,7 @@ class TestMicroservices(unittest.TestCase):
             if i >= 1:
                 user1_resp = tu.create_user_benchmark()
                 self.assertTrue(tu.status_code_is_success(user1_resp.status_code))
-                
+
                 add_credit_resp = tu.add_credit_to_user_benchmark(user1_resp.json()['user_id'], credit)
                 self.assertTrue(tu.status_code_is_success(add_credit_resp.status_code))
 
@@ -132,7 +131,6 @@ class TestMicroservices(unittest.TestCase):
                 find_user1_resp = tu.find_user_benchmark(user1_id)
                 self.assertTrue(tu.status_code_is_failure(find_user1_resp.status_code))
 
-
     def test_user_find_contains_faulty_log(self):
         # Get initial log count
         payment_log_count = int(tu.get_payment_log_count())
@@ -159,7 +157,6 @@ class TestMicroservices(unittest.TestCase):
 
         payment_log_count -= 1
         self.assertEqual(tu.get_payment_log_count(), payment_log_count)
-
 
     def test_add_funds_contains_faulty_log(self):
         # Get initial log count
@@ -219,7 +216,6 @@ class TestMicroservices(unittest.TestCase):
 
             payment_log_count -= i+1
             self.assertEqual(tu.get_payment_log_count(), payment_log_count)
-
 
     def test_pay_contains_faulty_log(self):
         # Get initial log count
