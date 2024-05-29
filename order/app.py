@@ -572,7 +572,6 @@ def add_item(order_id: str, item_id: str, quantity: int):
 
 def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):    
     error_flag = False
-    i = 0
     for item_id, quantity in removed_items:
         url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
         
@@ -587,22 +586,19 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
         db.set(get_key(), msgpack.encode(sent_payload_to_stock))
         
         rollback_resp = send_post_request(url, log_id)
-        test_code = rollback_resp.status_code if i != 1 else 400
         
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=url,
             to_url=request.url,
-            status=LogStatus.SUCCESS if test_code == 200 else LogStatus.FAILURE,
+            status=LogStatus.SUCCESS if rollback_resp == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
         
-        if test_code != 200: # No log on purpose since the fault tolerance should reroll again
+        if rollback_resp != 200: # No log on purpose since the fault tolerance should reroll again
             error_flag = True
-        
-        i += 1
     
     if error_flag:
         return abort(400, f"Failed to rollback")
@@ -634,7 +630,6 @@ def checkout(order_id: str):
         items_quantities[item_id] += quantity
 
     # The removed items will contain the items that we already have successfully subtracted stock from for rollback purposes.
-    i = 0
     removed_items: list[tuple[str, int]] = []
     for item_id, quantity in items_quantities.items():
 
@@ -653,20 +648,18 @@ def checkout(order_id: str):
 
         # actually sending the request
         stock_reply = send_post_request(request_url, log_id)
-        
-        test_code = stock_reply.status_code if i != 2 else 400
 
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=request_url,
             to_url=request.url,
-            status=LogStatus.SUCCESS if test_code == 200 else LogStatus.FAILURE,
+            status=LogStatus.SUCCESS if stock_reply == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
-        if test_code != 200:
+        if stock_reply != 200:
             rollback_stock(removed_items, log_id)
             
             error_payload = LogOrderValue(
