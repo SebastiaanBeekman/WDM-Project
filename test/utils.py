@@ -177,6 +177,10 @@ def add_item_to_order(order_id: str, item_id: str, quantity: int) -> int:
     return requests.post(f"{ORDER_URL}/orders/addItem/{order_id}/{item_id}/{quantity}").status_code
 
 
+def add_item_to_order_benchmark(order_id: str, item_id: str, quantity: int) -> int:
+    return requests.post(f"{ORDER_URL}/orders/addItem/{order_id}/{item_id}/{quantity}/benchmark")
+
+
 def find_order(order_id: str) -> dict:
     return requests.get(f"{ORDER_URL}/orders/find/{order_id}").json()
 

@@ -291,7 +291,8 @@ def find_order_benchmark(order_id: str):
 
 @app.post('/addItem/<order_id>/<item_id>/<quantity>/benchmark')
 def add_item_benchmark(order_id: str, item_id: str, quantity: int):
-    order_entry: OrderValue = db.get(order_id)
+    entry: OrderValue = db.get(order_id)
+    order_entry = msgpack.decode(entry, type=OrderValue)
     
     item_json = send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}/benchmark").json()
     
@@ -570,6 +571,8 @@ def add_item(order_id: str, item_id: str, quantity: int):
 
 
 def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):    
+    error_flag = False
+    i = 0
     for item_id, quantity in removed_items:
         url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
         
@@ -583,17 +586,26 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
         )
         db.set(get_key(), msgpack.encode(sent_payload_to_stock))
         
-        send_post_request(url, log_id)
+        rollback_resp = send_post_request(url, log_id)
+        test_code = rollback_resp.status_code if i != 1 else 400
         
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=url,
             to_url=request.url,
-            status=LogStatus.SUCCESS,
+            status=LogStatus.SUCCESS if test_code == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
+        
+        if test_code != 200: # No log on purpose since the fault tolerance should reroll again
+            error_flag = True
+        
+        i += 1
+    
+    if error_flag:
+        return abort(400, f"Failed to rollback")
 
 
 @app.post('/checkout/<order_id>')
@@ -622,6 +634,7 @@ def checkout(order_id: str):
         items_quantities[item_id] += quantity
 
     # The removed items will contain the items that we already have successfully subtracted stock from for rollback purposes.
+    i = 0
     removed_items: list[tuple[str, int]] = []
     for item_id, quantity in items_quantities.items():
 
@@ -640,18 +653,22 @@ def checkout(order_id: str):
 
         # actually sending the request
         stock_reply = send_post_request(request_url, log_id)
+        
+        test_code = stock_reply.status_code if i != 2 else 400
 
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=request_url,
             to_url=request.url,
-            status=LogStatus.SUCCESS if stock_reply.status_code == 200 else LogStatus.FAILURE,
+            status=LogStatus.SUCCESS if test_code == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
-        if stock_reply.status_code != 200:
+        if test_code != 200:
+            rollback_stock(removed_items, log_id)
+            
             error_payload = LogOrderValue(
                 id=log_id,
                 type=LogType.SENT,
@@ -662,10 +679,10 @@ def checkout(order_id: str):
             )
             db.set(get_key(), msgpack.encode(error_payload))
             
-            rollback_stock(removed_items, log_id)
-            
             abort(400, f'Out of stock on item_id: {item_id}')
         removed_items.append((item_id, quantity))
+
+        i += 1
 
     payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
 
@@ -694,6 +711,8 @@ def checkout(order_id: str):
     db.set(get_key(), msgpack.encode(received_payload_from_payment))
 
     if payment_reply.status_code != 200:
+        rollback_stock(removed_items)
+        
         error_payload = LogOrderValue(
             id=log_id,
             type=LogType.SENT,
@@ -703,8 +722,6 @@ def checkout(order_id: str):
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(error_payload))
-        
-        rollback_stock(removed_items)
         
         abort(400, "User out of credit")
     
@@ -824,7 +841,8 @@ def fix_fault_tolerance(min_diff: int = 5):
             continue
             
         # if "http://order-app/checkout/" in last_log["url"]["from"]:
-        #     continue
+        #     for log_entry in reversed(log_list):
+        #         log = log_entry["log"]
         
         for log_entry in reversed(log_list):
             log = log_entry["log"]
@@ -846,7 +864,7 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    # app.logger.setLevel(gunicorn_logger.level)
-    app.logger.setLevel(logging.DEBUG)
+    app.logger.setLevel(gunicorn_logger.level)
+    # app.logger.setLevel(logging.DEBUG)
     
     # fix_fault_tolerance()
