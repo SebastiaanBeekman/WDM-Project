@@ -1,3 +1,5 @@
+"""Simple database checks. Delivered with the template"""
+
 import unittest
 
 import utils as tu
