@@ -72,9 +72,3 @@ services:
   ids-db:
     image: redis:7.2-bookworm
     command: redis-server --requirepass redis --maxmemory 512mb
-    
-  memcached:
-    image: memcached:latest
-    ports:
-      - "11211:11211"
-    command: memcached 
