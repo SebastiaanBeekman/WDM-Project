@@ -511,7 +511,8 @@ def remove_credit(user_id: str, amount: int):
         )
         log_key = get_key()
         db.set(log_key, msgpack.encode(sent_log))
-        abort(400, f"User: {user_id} credit cannot get reduced below zero! Log key: {log_key}")
+        
+        return abort(400, f"User: {user_id} credit cannot get reduced below zero! Log key: {log_key}")
 
     # create log entry for the updated user
     update_payload = LogUserValue(

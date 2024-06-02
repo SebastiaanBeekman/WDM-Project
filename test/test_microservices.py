@@ -93,6 +93,11 @@ class TestMicroservices(unittest.TestCase):
         item_id1: str = item1['item_id']
         add_stock_response = tu.add_stock(item_id1, 15)
         self.assertTrue(tu.status_code_is_success(add_stock_response))
+        
+        # find_item1 = tu.find_item_benchmark(item_id1)
+        # self.assertTrue(tu.status_code_is_success(find_item1.status_code))
+        # stock_item1 = find_item1.json()['stock']
+        # print(f"Stock of item1: {stock_item1}")
 
         # add item to the stock service
         item2: dict = tu.create_item(5)
@@ -100,6 +105,11 @@ class TestMicroservices(unittest.TestCase):
         item_id2: str = item2['item_id']
         add_stock_response = tu.add_stock(item_id2, 1)
         self.assertTrue(tu.status_code_is_success(add_stock_response))
+        
+        # find_item2 = tu.find_item_benchmark(item_id2)
+        # self.assertTrue(tu.status_code_is_success(find_item2.status_code))
+        # stock_item2 = find_item2.json()['stock']
+        # print(f"Stock of item2: {stock_item2}")
 
         add_item_response = tu.add_item_to_order(order_id, item_id1, 1)
         self.assertTrue(tu.status_code_is_success(add_item_response))
@@ -108,8 +118,8 @@ class TestMicroservices(unittest.TestCase):
         subtract_stock_response = tu.subtract_stock(item_id2, 1)
         self.assertTrue(tu.status_code_is_success(subtract_stock_response))
 
-        checkout_response = tu.checkout_order(order_id).status_code
-        self.assertTrue(tu.status_code_is_failure(checkout_response))
+        checkout_response = tu.checkout_order(order_id)
+        self.assertTrue(tu.status_code_is_failure(checkout_response.status_code))
 
         stock_after_subtract: int = tu.find_item(item_id1)['stock']
         self.assertEqual(stock_after_subtract, 15)

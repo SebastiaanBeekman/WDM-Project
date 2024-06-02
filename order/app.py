@@ -571,7 +571,9 @@ def add_item(order_id: str, item_id: str, quantity: int):
     return Response(f"Item: {item_id} added to: {order_id} total price updated to: {order_entry.total_cost}, log_id: {log_id}", status=200)
 
 
-def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):    
+def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):
+    app.logger.debug(f"Rolling back {removed_items}")
+    
     error_flag = False
     for item_id, quantity in removed_items:
         url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
@@ -660,7 +662,8 @@ def checkout(order_id: str):
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
-        if stock_reply != 200:
+        if stock_reply.status_code != 200:
+            app.logger.debug(f'Out of stock on item_id: {item_id}')
             rollback_stock(removed_items, log_id)
             
             error_payload = LogOrderValue(
@@ -673,10 +676,9 @@ def checkout(order_id: str):
             )
             db.set(get_key(), msgpack.encode(error_payload))
             
-            abort(400, f'Out of stock on item_id: {item_id}')
+            return abort(400, f'Out of stock on item_id: {item_id}')
+        
         removed_items.append((item_id, quantity))
-
-        i += 1
 
     payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
 
@@ -858,7 +860,7 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    app.logger.setLevel(gunicorn_logger.level)
-    # app.logger.setLevel(logging.DEBUG)
+    # app.logger.setLevel(gunicorn_logger.level)
     
+    app.logger.setLevel(logging.DEBUG)
     # fix_fault_tolerance()
