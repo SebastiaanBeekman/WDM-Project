@@ -61,10 +61,14 @@ services:
   ids-service:
     build: ./ids
     image: ids:latest
+    environment:
+      - GATEWAY_URL=http://gateway:80
     command: gunicorn -b 0.0.0.0:5000 -w 2 --timeout 30 --log-level=info app:app
-    
-  memcached:
-    image: memcached:latest
-    ports:
-      - "11211:11211"
-    command: memcached 
+    env_file:
+      - env/ids_redis.env
+    depends_on:
+      - ids-db
+
+  ids-db:
+    image: redis:7.2-bookworm
+    command: redis-server --requirepass redis --maxmemory 512mb

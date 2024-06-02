@@ -309,6 +309,7 @@ def create_item(price: int):
 
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
+    
     app.logger.debug(f"Item: {item_id} created") # Keep this for benchmarking purposes
 
     # Create a log entry for the create request
@@ -512,7 +513,8 @@ def remove_stock(item_id: str, amount: int):
         )
         log_key = get_key()
         db.set(log_key, msgpack.encode(error_payload))
-        abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
+        
+        return abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
         
     # Create a log entry for the update request
     update_payload = LogStockValue(
@@ -637,7 +639,7 @@ else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
-    # app.logger.setLevel(logging.DEBUG)
     
+    # app.logger.setLevel(logging.DEBUG)
     # fix_fault_tolerance()
     

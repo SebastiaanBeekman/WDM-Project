@@ -303,8 +303,9 @@ def add_item_benchmark(order_id: str, item_id: str, quantity: int):
         db.set(order_id, msgpack.encode(order_entry))
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    
-    return jsonify({"order_id": order_id, "total_cost": order_entry.total_cost}), 200
+    # return jsonify({"order_id": order_id, "total_cost": order_entry.total_cost}), 200
+    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}",
+                    status=200)
 
 
 ########################################################################################################################
@@ -659,7 +660,7 @@ def checkout(order_id: str):
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
-        if stock_reply != 200:
+        if stock_reply.status_code != 200:
             rollback_stock(removed_items, log_id)
             
             error_payload = LogOrderValue(
@@ -672,10 +673,9 @@ def checkout(order_id: str):
             )
             db.set(get_key(), msgpack.encode(error_payload))
             
-            abort(400, f'Out of stock on item_id: {item_id}')
+            return abort(400, f'Out of stock on item_id: {item_id}')
+        
         removed_items.append((item_id, quantity))
-
-        i += 1
 
     payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
 
@@ -857,7 +857,7 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    app.logger.setLevel(gunicorn_logger.level)
-    # app.logger.setLevel(logging.DEBUG)
+    # app.logger.setLevel(gunicorn_logger.level)
     
+    app.logger.setLevel(logging.DEBUG)
     # fix_fault_tolerance()
