@@ -571,9 +571,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
     return Response(f"Item: {item_id} added to: {order_id} total price updated to: {order_entry.total_cost}, log_id: {log_id}", status=200)
 
 
-def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):
-    app.logger.debug(f"Rolling back {removed_items}")
-    
+def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):    
     error_flag = False
     for item_id, quantity in removed_items:
         url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
@@ -663,7 +661,6 @@ def checkout(order_id: str):
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
         if stock_reply.status_code != 200:
-            app.logger.debug(f'Out of stock on item_id: {item_id}')
             rollback_stock(removed_items, log_id)
             
             error_payload = LogOrderValue(
