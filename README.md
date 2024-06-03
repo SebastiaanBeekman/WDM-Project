@@ -1,54 +1,181 @@
-# Work In Progress
-**We've not been able to fully implement consistency yet. We have implemented logging in every functionality to help with reaching eventual consistency, but still struggle with understanding how to fix inconsistencies. We will continue working on it but would appreciate some feedback and/or guidance on how to continue.**
+# Web-scale Data Management Project - Group 11
 
-# Web-scale Data Management Project Template
+This project is a web-scale data management system designed to handle effectively transactions. It comprises microservices for order processing, payment handling, stock management, and ID generation, orchestrated using Docker. The system's architecture is based on a Choreography-based saga combined with RedLock for Redis to ensure consistency and logs for fault tolerance.
 
-Basic project structure with Python's Flask and Redis.
-**You are free to use any web framework in any language and any database you like for this project.**
+## Project Structure
 
-## Project structure
+- `env`: 
+    Folder containing the Redis environment variables for the Docker Compose deployment.
 
-* `env`
-    Folder containing the Redis env variables for the docker-compose deployment
+- `ids`: 
+    Folder containing the ID application logic and Dockerfile.
 
-* `helm-config`
-   Helm chart values for Redis and ingress-nginx
+- `order`: 
+    Folder containing the order application logic and Dockerfile.
 
-* `k8s`
-    Folder containing the kubernetes deployments, apps and services for the ingress, order, payment and stock services.
+- `payment`: 
+    Folder containing the payment application logic and Dockerfile.
 
-* `order`
-    Folder containing the order application logic and dockerfile.
+- `stock`: 
+    Folder containing the stock application logic and Dockerfile.
 
-* `payment`
-    Folder containing the payment application logic and dockerfile.
+- `test`: 
+    Folder containing some basic correctness tests for the entire system. Feel free to enhance them.
 
-* `stock`
-    Folder containing the stock application logic and dockerfile.
+## System Architecture
 
-* `test`
-    Folder containing some basic correctness tests for the entire system. (Feel free to enhance them)
+The system employs a Choreography-based saga pattern to manage distributed transactions across microservices. In this pattern, each local transaction publishes domain events that trigger local transactions in other services, ensuring eventual consistency without a central coordinator. However, to handle dirty reads and ensure stronger consistency, we use RedLock for Redis.
 
-## Deployment types
+### Choreography-based Saga
 
-### docker-compose (local development)
+- **ID Service**: Generates unique idempotent identifiers for logs.
+- **Order Service**: Handles order creation, updates, and checkouts.
+- **Payment Service**: Processes users and payments associated with orders.
+- **Stock Service**: Manages stock levels and updates.
 
-After coding the REST endpoint logic run `docker-compose up --build` in the base folder to test if your logic is correct
-(you can use the provided tests in the `\test` folder and change them as you wish).
+Each service communicates by emitting and listening to domain events, ensuring that all services are eventually consistent.
 
-***Requirements:*** You need to have docker and docker-compose installed on your machine.
+### Consistency and ault Tolerance
 
-### minikube (local k8s cluster)
+#### RedLock for Redis
 
-This setup is for local k8s testing to see if your k8s config works before deploying to the cloud.
-First deploy your database using helm by running the `deploy-charts-minicube.sh` file (in this example the DB is Redis
-but you can find any database you want in <https://artifacthub.io/> and adapt the script). Then adapt the k8s configuration files in the
-`\k8s` folder to mach your system and then run `kubectl apply -f .` in the k8s folder.
+To address the issue of dirty reads and ensure consistency across distributed transactions, the system utilizes RedLock for Redis. RedLock is a distributed lock management system that provides a way to implement distributed locks with Redis, ensuring that only one instance of a service can modify a resource at a time.
 
-***Requirements:*** You need to have minikube (with ingress enabled) and helm installed on your machine.
+#### Log-based Fault Tolerance
 
-### kubernetes cluster (managed k8s cluster in the cloud)
+To further ensure eventual consistency and handle faults, the system uses a log-based mechanism:
 
-Similarly to the `minikube` deployment but run the `deploy-charts-cluster.sh` in the helm step to also install an ingress to the cluster.
+- **Log Entries**: Each action performed by a service is logged.
+- **Log Parser**: A log parser periodically (every startup & 5 minutes) reviews the logs to detect and rectify inconsistencies.
+- **Fault Correction**: The log parser can replay logs and perform compensating actions to fix inconsistencies.
 
-***Requirements:*** You need to have access to kubectl of a k8s cluster.
+### Log Parser
+
+The log parser plays a crucial role in maintaining system reliability by:
+
+- Periodically reviewing the log entries to identify incomplete or inconsistent transactions.
+- Initiating compensating actions to correct any detected faults, ensuring that the system reaches an eventually consistent state.
+- Ensuring that any partial transactions are either completed or rolled back appropriately.
+
+## Prerequisites
+
+- Docker
+- Docker Compose
+
+## Installation
+
+1. **Install Docker**: Follow the instructions on the [Docker website](https://docs.docker.com/get-docker/).
+
+2. **Install Docker Compose**: Follow the instructions on the [Docker Compose website](https://docs.docker.com/compose/install/).
+
+## Deployment
+
+### Local Deployment with Docker Compose
+
+1. Clone the repository:
+    ```sh
+    git clone https://github.com/SebastiaanBeekman/WDM-Project.git
+    cd WDM-Project
+    ```
+
+2. Build and run the services:
+    ```sh
+    docker-compose up --build
+    ```
+
+3. Run the tests (optional):
+    ```sh
+    cd test
+    # Adjust tests as needed
+    pytest
+    ```
+
+## Usage
+
+### REST API Endpoints
+
+#### ID Service
+
+- **Generate ID**
+    ```sh
+    GET /ids/create
+    ```
+
+#### Order Service
+
+- **Create Order**
+    ```sh
+    POST /orders/create/{user_id}
+    ```
+
+- **Find Order**
+    ```sh
+    GET /orders/find/{order_id}
+    ```
+
+- **Add Item**
+    ```sh
+    POST /orders/addItem/{order_id}/{item_id}/{quantity}
+    ```
+
+- **Checkout**
+    ```sh
+    POST /orders/checkout/{order_id}
+    ```
+
+#### Payment Service
+
+- **Create User**
+    ```sh
+    POST /payment/create_user
+    ```
+
+- **Find User**
+    ```sh
+    GET /payment/find_user/{user_id}
+    ```
+
+- **Add credit**
+    ```sh
+    POST /payment/add_funds/{user_id}/{amount}
+    ```
+
+- **Remove credit**
+    ```sh
+    POST /payment/pay/{user_id}/{amount}
+    ```
+
+#### Stock Service
+
+- **Create Item**
+    ```sh
+    POST /stock/item/create/{price}
+    ```
+
+- **Find Item**
+    ```sh
+    GET /stock/find/{item_id}
+    ```
+
+- **Add Stock**
+    ```sh
+    POST /stock/add/{item_id}/{amount}
+    ```
+
+- **Remove Stock**
+    ```sh
+    POST /stock/subtract/{item_id}/{amount}
+    ```
+
+### Example Requests
+
+- **Create Order**
+    ```sh
+    curl -X POST http://127.0.0.1:8000/stock/item/create/3
+    ```
+
+## Contributions
+
+* Zoya van Meel: TBD
+* Nina Oosterlaar: TBD
+* Sebastiaan Beekman: TBD

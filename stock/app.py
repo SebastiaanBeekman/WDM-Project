@@ -6,12 +6,15 @@ import requests
 from enum import Enum
 import redis
 from copy import deepcopy
-import re
+from collections import defaultdict
+from ast import literal_eval
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
+# from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
+
+from redlock import RedLock
 
 
 DB_ERROR_STR = "DB error"
@@ -28,13 +31,12 @@ db: redis.Redis = redis.Redis(
 )
 pipeline_db = db.pipeline()
 
-
 def close_db_connection():
     db.close()
 
 
 atexit.register(close_db_connection)
-
+# atexit.register(lambda: scheduler.shutdown())
 
 class StockValue(Struct):
     stock: int
@@ -66,7 +68,6 @@ class LogStockValue(Struct):
     to_url: str | None = None    
 
 
-
 def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | None:
     try:
         entry: bytes = db.get(item_id)
@@ -90,14 +91,16 @@ def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | No
         return abort(400, f"Item: {item_id} not found! Log key: {log_key}")
     return entry
 
-### START OF LOG FUNCTIONS ###
+########################################################################################################################
+#   START OF LOG FUNCTIONS
+########################################################################################################################
 def format_log_entry(log_entry: LogStockValue) -> dict:
     return {
         "id": log_entry.id,
         "type": log_entry.type,
         "status": log_entry.status,
         "stock_id": log_entry.stock_id,
-        "stockValue:": {
+        "stock_value": {
             "old": {
                 "stock": log_entry.old_stockvalue.stock if log_entry.old_stockvalue else None,
                 "price": log_entry.old_stockvalue.price if log_entry.old_stockvalue else None
@@ -111,8 +114,19 @@ def format_log_entry(log_entry: LogStockValue) -> dict:
             "from": log_entry.from_url,
             "to": log_entry.to_url
         },
-        "dateTime": log_entry.dateTime
+        "date_time": log_entry.dateTime
     }
+
+
+def sort_logs(logs: list[dict]):
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
+    
+    return log_dict
 
 
 def get_log_from_db(log_id: str) -> LogStockValue | None:
@@ -126,6 +140,10 @@ def get_log_from_db(log_id: str) -> LogStockValue | None:
     if entry is None:
         abort(400, f"Log: {log_id} not found!")
     return entry
+
+@app.get('/log_count')
+def get_log_count():
+    return Response(str(len(db.keys("log:*"))), status=200)
 
 
 @app.get('/log/<log_id>')
@@ -162,8 +180,120 @@ def find_all_logs_from(number: int):
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-### END OF LOG FUNCTIONS ###
+    
+def find_all_logs_time(time: datetime, min_diff: int = 5):
+    try:
+        # Calculate the range
+        lower_bound: datetime = time - timedelta(minutes=min_diff)
+        upper_bound: datetime = time
 
+        # Create a broad pattern to fetch all potential keys
+        broad_pattern = "log:*"
+        
+        # Retrieve all keys matching the broad pattern
+        potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
+
+        # Filter keys based on the regex pattern
+        logs = []
+        for key in potential_keys:
+            timestamp_str = key.split(":")[-1][:20]
+            key_timestamp: datetime = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S%f")
+            
+            if lower_bound > key_timestamp or upper_bound < key_timestamp:
+                continue
+            
+            raw_data = db.get(key)
+            
+            if not raw_data:
+                continue
+                
+            log_entry = msgpack.decode(raw_data, type=LogStockValue)
+            logs.append({"id": key, "log": format_log_entry(log_entry)})
+
+        return logs
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+
+
+@app.get('/sorted_logs/<min_diff>')
+def find_sorted_logs(min_diff: int):
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, int(min_diff))
+    sorted_logs = sort_logs(logs)
+    
+    return jsonify(sorted_logs), 200
+
+
+@app.post('/log/create')
+def create_log():
+    str_dict_log_entry = str(request.get_json())
+    dict_log_entry = literal_eval(str_dict_log_entry)
+    log_entry = LogStockValue(**dict_log_entry)
+    
+    log_key = get_key()
+    db.set(log_key, msgpack.encode(log_entry))
+    
+    return jsonify({"msg": "Log entry created", "log_key": log_key}), 200
+
+########################################################################################################################
+#   START OF BENCHMARK FUNCTIONS
+########################################################################################################################
+@app.post('/item/create/<price>/benchmark')
+def create_item_benchmark(price: int):
+    item_id = str(uuid.uuid4())
+    stock_value = StockValue(stock=0, price=int(price))
+    
+    try:
+        db.set(item_id, msgpack.encode(stock_value))
+    except redis.exceptions.RedisError:        
+        return abort(400, DB_ERROR_STR)
+
+    return jsonify({'item_id': item_id}), 200
+
+
+@app.get('/find/<item_id>/benchmark')
+def find_item_benchmark(item_id: str):
+    entry: bytes = db.get(item_id)
+    item_entry: StockValue | None = msgpack.decode(entry, type=StockValue) if entry else None
+
+    if item_entry is None:
+        return abort(400, f"Item: {item_id} not found!")
+
+    return jsonify({"stock": item_entry.stock, "price": item_entry.price}), 200
+
+@app.post('/add/<item_id>/<amount>/benchmark')
+def add_stock_benchmark(item_id: str, amount: int):
+    item_entry: StockValue = get_item_from_db(item_id)
+    item_entry.stock += int(amount)
+    
+    try:
+        db.set(item_id, msgpack.encode(item_entry))
+    except redis.exceptions.RedisError:        
+        return abort(400, DB_ERROR_STR)
+
+    return jsonify({"stock": item_entry.stock}), 200
+
+@app.post('/subtract/<item_id>/<amount>/benchmark')
+def remove_stock_benchmark(item_id: str, amount: int):
+    item_entry: StockValue = get_item_from_db(item_id)
+    item_entry.stock -= int(amount)
+    
+    if item_entry.stock < 0:
+        return abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
+    
+    try:
+        db.set(item_id, msgpack.encode(item_entry))
+    except redis.exceptions.RedisError:        
+        return abort(400, DB_ERROR_STR)
+
+    return jsonify({"stock": item_entry.stock}), 200
+
+########################################################################################################################
+#   START OF MICROSERVICE FUNCTIONS
+########################################################################################################################
+# Log Order: 
+# Success: RECEIVED -> CREATE -> SENT (success)
+# Failure: RECEIVED -> SENT (error)
 @app.post('/item/create/<price>')
 def create_item(price: int):
     log_id = str(uuid.uuid4())
@@ -181,6 +311,8 @@ def create_item(price: int):
 
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
+    
+    app.logger.debug(f"Item: {item_id} created") # Keep this for benchmarking purposes
 
     # Create a log entry for the create request
     create_payload = LogStockValue(
@@ -197,11 +329,23 @@ def create_item(price: int):
     pipeline_db.set(item_id, msgpack.encode(stock_value))
     try:
         pipeline_db.execute()
-        app.logger.debug(f"Item: {item_id} created")
     except redis.exceptions.RedisError:
+        error_payload = LogStockValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,       # This endpoint
+            to_url=request.referrer,    # Endpoint that called this
+            stock_id=item_id,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
-        app.logger.debug(f"Item: {item_id} failed to create")
+        
         return abort(400, DB_ERROR_STR)
+    
+    # Fault Tollerance: CRASH - Undo
 
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
@@ -215,9 +359,11 @@ def create_item(price: int):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-    return jsonify({'item_id': item_id, 'log_key': log_key}), 200
+    return jsonify({'item_id': item_id, 'log_id': log_id}), 200
 
 
+# Log Order: RECEIVED -> SENT
+# Fault Tollerance: do nothing
 @app.get('/find/<item_id>')
 def find_item(item_id: str):
     log_id: str | None = request.args.get("log_id")
@@ -251,14 +397,12 @@ def find_item(item_id: str):
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
     # Return the item
-    return jsonify(
-        {
-            "stock": item_entry.stock,
-            "price": item_entry.price
-        }
-    )
+    return jsonify({"stock": item_entry.stock, "price": item_entry.price, "log_id": log_id}), 200
 
 
+# Log Order: 
+# Success: RECEIVED -> UPDATE -> SENT (success)
+# Failure: RECEIVED -> SENT (error)
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
     log_id: str | None = request.args.get("log_id")
@@ -276,48 +420,65 @@ def add_stock(item_id: str, amount: int):
     )
     db.set(get_key(), msgpack.encode(received_payload_from_user))
 
-    item_entry: StockValue = get_item_from_db(item_id)
-    old_item_entry: StockValue = deepcopy(item_entry)
-    
-    # Update the stock value
-    item_entry.stock += int(amount)
-    
-    # Create a log entry for the update request
-    update_payload = LogStockValue(
-        id=log_id,
-        type=LogType.UPDATE,
-        stock_id=item_id,
-        old_stockvalue=old_item_entry,
-        new_stockvalue=item_entry,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
+    with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
+        item_entry: StockValue = get_item_from_db(item_id)
+        old_item_entry: StockValue = deepcopy(item_entry)
+        
+        # Update the stock value
+        item_entry.stock += int(amount)
+        
+        # Create a log entry for the update request
+        update_payload = LogStockValue(
+            id=log_id,
+            type=LogType.UPDATE,
+            stock_id=item_id,
+            old_stockvalue=old_item_entry,
+            new_stockvalue=item_entry,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
 
-    # Set the log entry and the updated item in the pipeline
-    log_key = get_key()
-    pipeline_db.set(log_key, msgpack.encode(update_payload))
-    pipeline_db.set(item_id, msgpack.encode(item_entry))
-    try:
-        pipeline_db.execute()
-    except redis.exceptions.RedisError:
-        pipeline_db.discard()
-        app.logger.debug(f"Item: {item_id} failed to update")
-        return abort(400, DB_ERROR_STR)
-    
-    # Create a log entry for the sent response back to the user
-    sent_payload_to_user = LogStockValue(
-        id=log_id,
-        type=LogType.SENT,
-        from_url=request.url,       # This endpoint
-        to_url=request.referrer,    # Endpoint that called this
-        stock_id=item_id,
-        status=LogStatus.SUCCESS,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(sent_payload_to_user))
-    
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
+        # Set the log entry and the updated item in the pipeline
+        log_key = get_key()
+        pipeline_db.set(log_key, msgpack.encode(update_payload))
+        pipeline_db.set(item_id, msgpack.encode(item_entry))
+        try:
+            pipeline_db.execute()
+        except redis.exceptions.RedisError:        
+            error_payload = LogStockValue(
+                id=log_id,
+                type=LogType.SENT,
+                from_url=request.url,       # This endpoint
+                to_url=request.referrer,    # Endpoint that called this
+                stock_id=item_id,
+                status=LogStatus.FAILURE,
+                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+            )
+            db.set(get_key(), msgpack.encode(error_payload))
+            
+            pipeline_db.discard()
+            
+            return abort(400, DB_ERROR_STR)
+        
+        # Fault Tollerance: CRASH - Undo
+
+        # Create a log entry for the sent response back to the user
+        sent_payload_to_user = LogStockValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,       # This endpoint
+            to_url=request.referrer,    # Endpoint that called this
+            stock_id=item_id,
+            status=LogStatus.SUCCESS,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        db.set(get_key(), msgpack.encode(sent_payload_to_user))
+
+        return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_id}", status=200)
 
 
+# Log Order: 
+# Success: RECEIVED -> UPDATE -> SENT (success)
+# Failure: RECEIVED -> SENT (error)
 @app.post('/subtract/<item_id>/<amount>')
 def remove_stock(item_id: str, amount: int):
     log_id: str | None = request.args.get("log_id")
@@ -335,62 +496,77 @@ def remove_stock(item_id: str, amount: int):
     )
     db.set(get_key(), msgpack.encode(received_payload_from_user))
     
-    item_entry: StockValue = get_item_from_db(item_id)
-    old_item_entry: StockValue = deepcopy(item_entry)
-    
-    # Update stock
-    item_entry.stock -= int(amount)
-    
-    if item_entry.stock < 0:
-        # Create a log entry for the error
-        error_payload = LogStockValue(
+    with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
+        item_entry: StockValue = get_item_from_db(item_id)
+        old_item_entry: StockValue = deepcopy(item_entry)
+        
+        # Update stock
+        item_entry.stock -= int(amount)
+        app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}") # Keep this for benchmarking purposes
+        
+        if item_entry.stock < 0:
+            # Create a log entry for the error
+            error_payload = LogStockValue(
+                id=log_id,
+                type=LogType.SENT,
+                stock_id=item_id,
+                old_stockvalue=old_item_entry,
+                new_stockvalue=item_entry,
+                status=LogStatus.FAILURE,
+                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+            )
+            log_key = get_key()
+            db.set(log_key, msgpack.encode(error_payload))
+            
+            return abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
+            
+        # Create a log entry for the update request
+        update_payload = LogStockValue(
             id=log_id,
-            type=LogType.SENT,
+            type=LogType.UPDATE,
             stock_id=item_id,
             old_stockvalue=old_item_entry,
             new_stockvalue=item_entry,
-            status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
-        log_key = get_key()
-        db.set(log_key, msgpack.encode(error_payload))
-        abort(400, f"Item: {item_id} stock cannot get reduced below zero! Log key: {log_key}")
         
-    # Create a log entry for the update request
-    update_payload = LogStockValue(
-        id=log_id,
-        type=LogType.UPDATE,
-        stock_id=item_id,
-        old_stockvalue=old_item_entry,
-        new_stockvalue=item_entry,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    
-    # Set the log entry and the updated item in the pipeline
-    log_key = get_key()
-    pipeline_db.set(log_key, msgpack.encode(update_payload))
-    pipeline_db.set(item_id, msgpack.encode(item_entry))
-    try:
-        pipeline_db.execute()
-        app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
-    except redis.exceptions.RedisError:
-        pipeline_db.discard()
-        app.logger.debug(f"Item: {item_id} failed to update")
-        return abort(400, DB_ERROR_STR)
-    
-    # Create a log entry for the sent response back to the user
-    sent_payload_to_user = LogStockValue(
-        id=log_id,
-        type=LogType.SENT,
-        from_url=request.url,       # This endpoint
-        to_url=request.referrer,    # Endpoint that called this
-        stock_id=item_id,
-        status=LogStatus.SUCCESS,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(sent_payload_to_user))
-    
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_key: {log_key}", status=200)
+        # Set the log entry and the updated item in the pipeline
+        log_key = get_key()
+        pipeline_db.set(log_key, msgpack.encode(update_payload))
+        pipeline_db.set(item_id, msgpack.encode(item_entry))
+        try:
+            pipeline_db.execute()
+        except redis.exceptions.RedisError:
+            error_payload = LogStockValue(
+                id=log_id,
+                type=LogType.SENT,
+                from_url=request.url,       # This endpoint
+                to_url=request.referrer,    # Endpoint that called this
+                stock_id=item_id,
+                status=LogStatus.FAILURE,
+                dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+            )
+            db.set(get_key(), msgpack.encode(error_payload))
+            
+            pipeline_db.discard()
+            
+            return abort(400, DB_ERROR_STR)
+        
+        # Fault Tollerance: CRASH - Undo
+        
+        # Create a log entry for the sent response back to the user
+        sent_payload_to_user = LogStockValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,       # This endpoint
+            to_url=request.referrer,    # Endpoint that called this
+            stock_id=item_id,
+            status=LogStatus.SUCCESS,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
+        )
+        db.set(get_key(), msgpack.encode(sent_payload_to_user))
+        
+        return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_id}", status=200)
 
 
 def get_key():
@@ -418,56 +594,56 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
         pipeline_db.discard()
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
-
-  
-def find_all_logs_time(number: int):
-    try:
-        # Calculate the range
-        lower_bound = number - 6
-        upper_bound = number
-
-        # Create a broad pattern to fetch all potential keys
-        broad_pattern = "log:*"
-        # Retrieve all keys matching the broad pattern
-        potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
-
-        # Create a regex pattern to filter the keys within the desired range
-        pattern = re.compile(f"log:({lower_bound}|{lower_bound+1}|{upper_bound}).*")
-
-        # Filter keys based on the regex pattern
-        log_keys = [key for key in potential_keys if pattern.match(key)]
-
-        # Retrieve values corresponding to the keys
-        logs = []
-        for key in log_keys:
-            raw_data = db.get(key)
-            if raw_data:
-                log_entry = msgpack.decode(raw_data, type=LogStockValue)
-                logs.append({"id": key, "log": format_log_entry(log_entry)})
-
-        return logs
-    except redis.exceptions.RedisError:
-        return abort(500, 'Failed to retrieve logs from the database')
     
-    
+
 def fix_consistency():
-    time = int(datetime.now().strftime("%Y%m%d%H%M%S%f")[:-8]) 
-    logs = find_all_logs_time(time)
-    app.logger.debug(logs)
-    app.logger.debug(time)
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, 1)
     
-scheduler = BackgroundScheduler()
-scheduler.add_job(fix_consistency, 'interval', seconds=500)
-scheduler.start()
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
 
-atexit.register(lambda: scheduler.shutdown())
+@app.get('/fault_tolerance/<min_diff>')
+def test_fault_tolerance(min_diff: int):
+    fix_fault_tolerance(int(min_diff))
+    return jsonify({"msg": "Fault Tollerance Successful"}), 200
 
 
+def fix_fault_tolerance(min_diff: int = 5):
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, int(min_diff))
+    sorted_logs = sort_logs(logs)
+    
+    for _, log_list in sorted_logs.items():
+        last_log = log_list[-1]["log"]
+        if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
+            continue
+        
+        for log_entry in reversed(log_list):
+            log = log_entry["log"]
+            
+            log_type = log["type"]
+            log_stock_id = log["stock_id"]
+            if log_type == LogType.CREATE:
+                db.delete(log_stock_id)
+            elif log_type == LogType.UPDATE:
+                log_stock_old = log["stock_value"]["old"]
+                db.set(log_stock_id, msgpack.encode(StockValue(stock=log_stock_old["stock"], price=log_stock_old["price"])))
+            
+            db.delete(log_entry["id"])
+    
+    
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
-    app.logger.setLevel(logging.DEBUG)
+    
+    # app.logger.setLevel(logging.DEBUG)
+    # fix_fault_tolerance()
     

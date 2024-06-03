@@ -8,11 +8,12 @@ import requests
 from enum import Enum
 from copy import deepcopy
 from collections import defaultdict
+from datetime import datetime, timedelta
+from ast import literal_eval
 
 from msgspec import msgpack, Struct
-from flask import Flask, jsonify, abort, Response, url_for, request
+from flask import Flask, jsonify, abort, Response, request
 from datetime import datetime
-
 
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
@@ -73,8 +74,8 @@ def send_post_request(url: str, log_id: str | None = None):
     url += f"?log_id={log_id}" if log_id is not None else ""
     try:
         response = requests.post(url, headers=headers)
-    except requests.exceptions.RequestException:
-        abort(400, REQ_ERROR_STR)
+    except requests.exceptions.RequestException as exc:
+        abort(400, exc)
     else:
         return response
 
@@ -113,14 +114,16 @@ def get_order_from_db(order_id: str, log_id: str | None = None) -> OrderValue | 
         abort(400, f"Order: {order_id} not found! Log key: {log_key}")
     return entry
 
-### START OF LOG FUNCTIONS ###
+########################################################################################################################
+#   START OF LOG FUNCTIONS
+########################################################################################################################
 def format_log_entry(log_entry: LogOrderValue) -> dict:
     return {
         "id": log_entry.id,
         "type": log_entry.type,
         "status": log_entry.status,
         "order_id": log_entry.order_id,
-        "orderValue": {
+        "order_value": {
             "old": {
                 "paid": log_entry.old_ordervalue.paid if log_entry.old_ordervalue else None,
                 "items": log_entry.old_ordervalue.items if log_entry.old_ordervalue else None,
@@ -138,8 +141,19 @@ def format_log_entry(log_entry: LogOrderValue) -> dict:
             "from": log_entry.from_url,
             "to": log_entry.to_url
         },
-        "dateTime": log_entry.dateTime,
+        "date_time": log_entry.dateTime,
     }
+    
+
+def sort_logs(logs: list[dict]):
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
+    
+    return log_dict
 
 
 def get_log_from_db(log_id: str) -> LogOrderValue | None:
@@ -154,6 +168,11 @@ def get_log_from_db(log_id: str) -> LogOrderValue | None:
     return entry
 
 
+@app.get('/log_count')
+def get_log_count():
+    return Response(str(len(db.keys("log:*"))), status=200)
+
+
 @app.get('/log/<log_id>')
 def find_log(log_id: str):
     log_entry: LogOrderValue = get_log_from_db(log_id)
@@ -162,7 +181,7 @@ def find_log(log_id: str):
 
 
 @app.get('/logs')
-def get_all_logs():
+def find_all_logs():
     try:
         # Retrieve all keys starting with "log:" from Redis
         log_keys = [key.decode('utf-8') for key in db.keys("log:*")]
@@ -176,7 +195,7 @@ def get_all_logs():
 
 
 @app.get('/logs_from/<number>')
-def get_all_logs_from(number: int):
+def find_all_logs_from(number: int):
     """This function is still broken."""
     try:
         # Retrieve all keys starting with "log:" from Redis
@@ -188,8 +207,109 @@ def get_all_logs_from(number: int):
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-### END OF LOG FUNCTIONS ###
 
+
+def find_all_logs_time(time: datetime, min_diff: int = 5):
+    try:
+        # Calculate the range
+        lower_bound: datetime = time - timedelta(minutes=min_diff)
+        upper_bound: datetime = time
+
+        # Create a broad pattern to fetch all potential keys
+        broad_pattern = "log:*"
+        # Retrieve all keys matching the broad pattern
+        potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
+
+        # Filter keys based on the regex pattern
+        logs = []
+        for key in potential_keys:
+            timestamp_str = key.split(":")[-1][:20]
+            key_timestamp: datetime = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S%f")
+            
+            if lower_bound > key_timestamp or upper_bound < key_timestamp:
+                continue
+            
+            raw_data = db.get(key)
+            
+            if not raw_data:
+                continue
+                
+            log_entry = msgpack.decode(raw_data, type=LogOrderValue)
+            logs.append({"id": key, "log": format_log_entry(log_entry)})
+
+        return logs
+    except redis.exceptions.RedisError:
+        return abort(500, 'Failed to retrieve logs from the database')
+
+
+@app.get('/sorted_logs/<min_diff>')
+def find_sorted_logs(min_diff: int):
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, int(min_diff))
+    sorted_logs = sort_logs(logs)
+    
+    return jsonify(sorted_logs), 200    
+
+
+@app.post("/log/create")
+def create_log():
+    str_dict_log_entry = str(request.get_json())
+    dict_log_entry = literal_eval(str_dict_log_entry)
+    log_entry = LogOrderValue(**dict_log_entry)
+    
+    log_key = get_key()
+    db.set(log_key, msgpack.encode(log_entry))
+    
+    return jsonify({"msg": "Log entry created", "log_key": log_key}), 200
+
+########################################################################################################################
+#   START OF BENCHMARK FUNCTIONS
+########################################################################################################################
+@app.post('/create/<user_id>/benchmark')
+def create_order_benchmark(user_id: str):
+    order_id = str(uuid.uuid4())
+    order_value = OrderValue(user_id=user_id, total_cost=0, items=[], paid=False)
+    
+    try:
+        db.set(order_id, msgpack.encode(order_value))
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    
+    return jsonify({"order_id": order_id}), 200
+
+
+@app.get('/find/<order_id>/benchmark')
+def find_order_benchmark(order_id: str):
+    entry: OrderValue = db.get(order_id)
+    order_entry: OrderValue | None = msgpack.decode(entry, type=OrderValue) if entry else None
+    
+    if order_entry is None:
+        return abort(400, f"Order: {order_id} not found!")
+    
+    return jsonify({"user_id": order_entry.user_id, "total_cost": order_entry.total_cost, "items": order_entry.items, "paid": order_entry.paid}), 200
+
+@app.post('/addItem/<order_id>/<item_id>/<quantity>/benchmark')
+def add_item_benchmark(order_id: str, item_id: str, quantity: int):
+    entry: OrderValue = db.get(order_id)
+    order_entry = msgpack.decode(entry, type=OrderValue)
+    
+    item_json = send_get_request(f"{GATEWAY_URL}/stock/find/{item_id}/benchmark").json()
+    
+    order_entry.items.append((item_id, int(quantity)))
+    order_entry.total_cost += int(quantity) * item_json["price"]
+    
+    try:
+        db.set(order_id, msgpack.encode(order_entry))
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+    # return jsonify({"order_id": order_id, "total_cost": order_entry.total_cost}), 200
+    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}",
+                    status=200)
+
+
+########################################################################################################################
+#   START OF MICROSERVICE FUNCTIONS
+########################################################################################################################
 @app.post('/create/<user_id>')
 def create_order(user_id: str):
     log_id = str(uuid.uuid4())
@@ -204,6 +324,44 @@ def create_order(user_id: str):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_key(), msgpack.encode(received_payload_from_user))
+    
+    # Check if user exists
+    request_url = f"{GATEWAY_URL}/payment/find_user/{user_id}"
+    sent_payload_to_payment = LogOrderValue(
+        id=log_id,
+        type=LogType.SENT,
+        from_url=request.url,
+        to_url=request_url,
+        status=LogStatus.PENDING,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_key(), msgpack.encode(sent_payload_to_payment))
+
+    # Send the request
+    payment_reply = send_get_request(request_url, log_id)
+
+    # Create a log entry for the received response (success or failure) from the stock service
+    received_payload_from_payment = LogOrderValue(
+        id=log_id,
+        type=LogType.RECEIVED,
+        from_url=request_url,
+        to_url=request.url,
+        status=LogStatus.SUCCESS if payment_reply.status_code == 200 else LogStatus.FAILURE,
+        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+    )
+    db.set(get_key(), msgpack.encode(received_payload_from_payment))
+    
+    if payment_reply.status_code != 200:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        return abort(400, f"User: {user_id} does not exist!")
     
     order_id = str(uuid.uuid4())
     order_value = OrderValue(
@@ -229,8 +387,21 @@ def create_order(user_id: str):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
+    
+    # Fault Tollerance: CRASH - Undo
     
     sent_payload_to_user = LogOrderValue(
         id=log_id,
@@ -242,7 +413,7 @@ def create_order(user_id: str):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
     
-    return jsonify({'order_id': order_id, 'log_key': log_key}), 200
+    return jsonify({'order_id': order_id, 'log_id': log_id}), 200
 
 
 @app.get('/find/<order_id>')
@@ -283,7 +454,8 @@ def find_order(order_id: str):
             "paid": order_entry.paid,
             "items": order_entry.items,
             "user_id": order_entry.user_id,
-            "total_cost": order_entry.total_cost
+            "total_cost": order_entry.total_cost,
+            "log_id": log_id
         }
     )
 
@@ -332,7 +504,16 @@ def add_item(order_id: str, item_id: str, quantity: int):
 
     # Request failed because item does not exist
     if stock_reply.status_code != 200:
-        abort(400, f"Item: {item_id} does not exist!")
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        return abort(400, f"Item: {item_id} does not exist!")
 
     # Locally update the order value
     order_entry: OrderValue = get_order_from_db(order_id)
@@ -358,8 +539,21 @@ def add_item(order_id: str, item_id: str, quantity: int):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
+    
+    # Fault Tollerance - Crash, undo
 
     # Create a log for the sent response
     sent_payload_to_user = LogOrderValue(
@@ -377,6 +571,7 @@ def add_item(order_id: str, item_id: str, quantity: int):
 
 
 def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = None):    
+    error_flag = False
     for item_id, quantity in removed_items:
         url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
         
@@ -390,21 +585,30 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
         )
         db.set(get_key(), msgpack.encode(sent_payload_to_stock))
         
-        send_post_request(url, log_id)
+        rollback_resp = send_post_request(url, log_id)
+        rollback_resp_status = rollback_resp.status_code
         
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=url,
             to_url=request.url,
-            status=LogStatus.SUCCESS,
+            status=LogStatus.SUCCESS if rollback_resp_status == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
+        
+        if rollback_resp_status != 200: # No log on purpose since the fault tolerance should reroll again
+            error_flag = True
+    
+    if error_flag:
+        return abort(400, f"Failed to rollback")
 
 
 @app.post('/checkout/<order_id>')
 def checkout(order_id: str):
+    app.logger.debug(f"Checking out {order_id}") # Keep this for benchmarking purposes
+    
     log_id = str(uuid.uuid4())
 
     # Create a log entry for the received request
@@ -445,18 +649,21 @@ def checkout(order_id: str):
 
         # actually sending the request
         stock_reply = send_post_request(request_url, log_id)
+        stock_reply_status = stock_reply.status_code
 
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=request_url,
             to_url=request.url,
-            status=LogStatus.SUCCESS if stock_reply.status_code == 200 else LogStatus.FAILURE,
+            status=LogStatus.SUCCESS if stock_reply_status == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
-        if stock_reply.status_code != 200:
+        if stock_reply_status != 200:
+            rollback_stock(removed_items, log_id)
+            
             error_payload = LogOrderValue(
                 id=log_id,
                 type=LogType.SENT,
@@ -467,9 +674,8 @@ def checkout(order_id: str):
             )
             db.set(get_key(), msgpack.encode(error_payload))
             
-            rollback_stock(removed_items, log_id)
-            
-            abort(400, f'Out of stock on item_id: {item_id}')
+            return abort(400, f'Out of stock on item_id: {item_id}')
+        
         removed_items.append((item_id, quantity))
 
     payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
@@ -486,6 +692,7 @@ def checkout(order_id: str):
     db.set(get_key(), msgpack.encode(sent_payload_to_payment))
 
     payment_reply = send_post_request(payment_request_url, log_id)
+    payment_reply_status = payment_reply.status_code
 
     # Create a log entry for the received response (success or failure)
     received_payload_from_payment = LogOrderValue(
@@ -493,12 +700,14 @@ def checkout(order_id: str):
         type=LogType.RECEIVED,
         from_url=payment_request_url,
         to_url=request.url,
-        status=LogStatus.SUCCESS if payment_reply.status_code == 200 else LogStatus.FAILURE,
+        status=LogStatus.SUCCESS if payment_reply_status == 200 else LogStatus.FAILURE,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_key(), msgpack.encode(received_payload_from_payment))
 
-    if payment_reply.status_code != 200:
+    if payment_reply_status != 200:
+        rollback_stock(removed_items, log_id)
+        
         error_payload = LogOrderValue(
             id=log_id,
             type=LogType.SENT,
@@ -508,8 +717,6 @@ def checkout(order_id: str):
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(error_payload))
-        
-        rollback_stock(removed_items)
         
         abort(400, "User out of credit")
     
@@ -531,7 +738,18 @@ def checkout(order_id: str):
     try:
         pipeline_db.execute()
     except redis.exceptions.RedisError:
+        error_payload = LogOrderValue(
+            id=log_id,
+            type=LogType.SENT,
+            from_url=request.url,
+            to_url=request.referrer,
+            status=LogStatus.FAILURE,
+            dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        )
+        db.set(get_key(), msgpack.encode(error_payload))
+        
         pipeline_db.discard()
+        
         return abort(400, DB_ERROR_STR)
 
     # Create a log for the sent response
@@ -546,7 +764,7 @@ def checkout(order_id: str):
     )
     db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
-    app.logger.debug("Checkout successful")
+    app.logger.debug("Checkout successful") # Keep this for benchmarking purposes
     return Response(f"Checkout successful, log: {log_key}", status=200)
 
 
@@ -585,10 +803,85 @@ def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
     return jsonify({"msg": "Batch init for orders successful"})
 
 
+@app.get('/log_consistency')
+def fix_consistency():
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, 1)
+    
+    log_dict = defaultdict(list)
+    for log in logs:
+        log_dict[log["log"]["id"]].append(log)
+    
+    for key in log_dict:
+        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
+    
+    return log_dict
+
+
+@app.get('/fault_tolerance/<min_diff>')
+def test_fault_tolerance(min_diff: int):
+    fix_fault_tolerance(int(min_diff))
+    return jsonify({"msg": "Fault Tollerance Successful"}), 200
+
+
+def fix_fault_tolerance(min_diff: int = 5):
+    time: datetime = datetime.now()
+    logs = find_all_logs_time(time, int(min_diff))
+    sorted_logs = sort_logs(logs)
+    
+    for _, log_list in sorted_logs.items():
+        last_log = log_list[-1]["log"]
+        
+        if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
+            continue
+        
+        
+        if last_log["url"]["from"] is not None and last_log["url"]["to"] is not None:
+            if "checkout" in last_log["url"]["from"] or "checkout" in last_log["url"]["to"]: # If log was a checkout
+                for log_entry in reversed(log_list):
+                    log = log_entry["log"]
+                    log_type = log["type"]
+                    log_status = log["status"]
+                    
+                    if (log_type == LogType.RECEIVED and log_status == LogStatus.FAILURE) and "stock/add" in log["url"]["from"]:
+                        rollback_flag = True
+                        rollback_url = GATEWAY_URL + "/stock/add/" + log["url"]["from"].split("add/")[1]
+                        rollback_counter = 0
+                        while rollback_flag:
+                            try:
+                                rollback_resp = requests.post(rollback_url)
+                                if rollback_resp.status_code == 200:
+                                    rollback_flag = False
+                            except Exception as e:
+                                app.logger.error(f"Rollback attempt failed: {e}")
+                                if rollback_counter > 10:
+                                    return abort(400, "Failed to rollback")
+                                rollback_counter += 1
+                    
+                    db.delete(log_entry["id"])
+                
+                continue
+                
+        for log_entry in reversed(log_list):
+            log = log_entry["log"]
+            
+            log_type = log["type"]
+            log_order_id = log["order_id"]
+            if log_type == LogType.CREATE:
+                db.delete(log_order_id)
+            elif log_type == LogType.UPDATE:
+                log_order_old = log["order_value"]["old"]
+                db.set(log_order_id, msgpack.encode(OrderValue(paid=log_order_old["paid"], items=log_order_old["items"], user_id=log_order_old["user_id"], total_cost=log_order_old["total_cost"])))
+            
+            db.delete(log_entry["id"])
+        
+
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     # app.logger.setLevel(gunicorn_logger.level)
+    
     app.logger.setLevel(logging.DEBUG)
+    # fix_fault_tolerance()
