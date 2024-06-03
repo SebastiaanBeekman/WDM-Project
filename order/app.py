@@ -294,6 +294,47 @@ def add_item_benchmark(order_id: str, item_id: str, quantity: int):
                     status=200)
 
 
+@app.post('/checkout/<order_id>/benchmark')
+def checkout_benchmark(order_id: str):
+    order_entry: OrderValue = get_order_from_db(order_id)
+
+    # get the quantity per item
+    items_quantities: dict[str, int] = defaultdict(int)
+    for item_id, quantity in order_entry.items:
+        items_quantities[item_id] += quantity
+
+    # The removed items will contain the items that we already have successfully subtracted stock from for rollback purposes.
+    removed_items: list[tuple[str, int]] = []
+    for item_id, quantity in items_quantities.items():
+        request_url = f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}"
+
+        stock_reply = send_post_request(request_url)
+        stock_reply_status = stock_reply.status_code
+
+        if stock_reply_status != 200:
+            rollback_stock(removed_items)
+            return abort(400, f'Out of stock on item_id: {item_id}')
+        
+        removed_items.append((item_id, quantity))
+
+    payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
+
+    payment_reply = send_post_request(payment_request_url)
+    payment_reply_status = payment_reply.status_code
+
+    if payment_reply_status != 200:
+        rollback_stock(removed_items)    
+        abort(400, "User out of credit")
+    
+    order_entry.paid = True
+
+    try:
+        db.set(order_id, msgpack.encode(order_entry))
+    except redis.exceptions.RedisError:
+        return abort(400, DB_ERROR_STR)
+
+    return Response(f"Checkout successful", status=200)
+
 ########################################################################################################################
 #   START OF MICROSERVICE FUNCTIONS
 ########################################################################################################################
@@ -709,7 +750,7 @@ def fix_fault_tolerance(min_diff: int = 5):
             if log_type == LogType.CREATE:
                 db.delete(log_order_id)
             elif log_type == LogType.UPDATE:
-                log_order_old = log["order_value"]["old"]
+                log_order_old = log["old_order_value"]
                 db.set(log_order_id, msgpack.encode(OrderValue(paid=log_order_old["paid"], items=log_order_old["items"], user_id=log_order_old["user_id"], total_cost=log_order_old["total_cost"])))
             
             db.delete(log_entry["id"])
