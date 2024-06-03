@@ -527,9 +527,208 @@ class TestMicroservices(unittest.TestCase):
             
             i += 1
         
-    # TODO: Implement this test when fault tolerance can handle checkout (rollback)
-    # def test_checkout_rollback_contains_faulty_log(self):
-    #     pass
+        
+    def test_checkout_stock_rollback_contains_faulty_log(self):
+        log_count = int(tu.get_order_log_count())
+        
+        log_id = str(uuid.uuid4())
+        checkout_url = f"{tu.ORDER_URL}/orders/checkout/1"
+        
+        # Create item 1
+        item1 = tu.create_item_benchmark(2)
+        self.assertTrue(tu.status_code_is_success(item1.status_code))
+        item1_id = item1.json()['item_id']
+        
+        # Add stock to item 1
+        stock_added = tu.add_stock_benchmark(item1_id, 20)
+        self.assertTrue(tu.status_code_is_success(stock_added.status_code))
+        item1_stock = tu.find_item_benchmark(item1_id).json()['stock']
+        
+        # Create log for receive from user
+        log1_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url="BENCHMARK",
+            to_url=checkout_url,
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        item1_subtract_url = f"{tu.STOCK_URL}/stock/subtract/{item1_id}/1"
+        
+        # Create log for send to stock (item 1)
+        log2_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.SENT,
+            from_url=checkout_url,
+            to_url=item1_subtract_url,
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Create log for receive from stock (success)
+        log3_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url=item1_subtract_url,
+            to_url=checkout_url,
+            status=LogStatus.SUCCESS,
+        )
+        self.assertTrue(tu.status_code_is_success(log3_resp.status_code))   
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count) 
+        
+        # Create item 2
+        item2 = tu.create_item_benchmark(2)
+        self.assertTrue(tu.status_code_is_success(item2.status_code))
+        item2_id = item2.json()['item_id']
+        
+        # Add stock to item 2
+        stock_added = tu.add_stock_benchmark(item2_id, 20)
+        item2_stock = tu.find_item_benchmark(item2_id).json()['stock']
+        
+        item2_subtract_url = f"{tu.STOCK_URL}/stock/subtract/{item2_id}/1"
+        
+        # Create log for send to stock (item 2)
+        log4_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.SENT,
+            from_url=checkout_url,
+            to_url=item2_subtract_url,
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log4_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Create log for receive from stock (success)
+        log5_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url=item2_subtract_url,
+            to_url=checkout_url,
+            status=LogStatus.SUCCESS,
+        )
+        self.assertTrue(tu.status_code_is_success(log5_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Create item 3
+        item3 = tu.create_item_benchmark(2)
+        self.assertTrue(tu.status_code_is_success(item3.status_code))
+        item3_id = item3.json()['item_id']
+        
+        item3_subtract_url = f"{tu.STOCK_URL}/stock/subtract/{item3_id}/1"
+        
+        # Create log for send to stock (item 3)
+        log6_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.SENT,
+            from_url=checkout_url,
+            to_url=item3_subtract_url,
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log6_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Create log for receive from stock (failure)
+        log7_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url=item3_subtract_url,
+            to_url=checkout_url,
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log7_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        item1_add_url = f"{tu.STOCK_URL}/stock/add/{item1_id}/1"
+        item2_add_url = f"{tu.STOCK_URL}/stock/add/{item2_id}/1"
+        
+        # Create log for send rollback to stock (item 1)
+        log8_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.SENT,
+            from_url=checkout_url,
+            to_url=item1_add_url,
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log8_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Create log for receive rollback from stock (success)
+        log9_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url=item1_add_url,
+            to_url=checkout_url,
+            status=LogStatus.SUCCESS,
+        )
+        self.assertTrue(tu.status_code_is_success(log9_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Create log for send rollback to stock (item 2)
+        log10_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.SENT,
+            from_url=checkout_url,
+            to_url=item2_add_url,
+            status=LogStatus.PENDING,
+        )
+        self.assertTrue(tu.status_code_is_success(log10_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Create log for receive rollback from stock (failure)
+        log11_resp = tu.create_order_log(
+            log_id=log_id,
+            type=LogType.RECEIVED,
+            from_url=item2_add_url,
+            to_url=checkout_url,
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log11_resp.status_code))
+        
+        log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        ft_resp = tu.fault_tolerance_order()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        log_count -= 11
+        self.assertEqual(int(tu.get_order_log_count()), log_count)
+        
+        # Check if stock was rolled back
+        find_item1 = tu.find_item_benchmark(item1_id)
+        self.assertTrue(tu.status_code_is_success(find_item1.status_code))
+        
+        find_item1_stock = find_item1.json()['stock']
+        self.assertEqual(find_item1_stock, item1_stock)
+        
+        find_item2 = tu.find_item_benchmark(item2_id)
+        self.assertTrue(tu.status_code_is_success(find_item2.status_code))
+        
+        find_item2_stock = find_item2.json()['stock']
+        self.assertEqual(find_item2_stock, item2_stock+1)
+        
         
 if __name__ == '__main__':
     unittest.main()

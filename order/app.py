@@ -15,7 +15,6 @@ from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
 from datetime import datetime
 
-
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
 GATEWAY_URL = os.environ['GATEWAY_URL']
@@ -75,8 +74,8 @@ def send_post_request(url: str, log_id: str | None = None):
     url += f"?log_id={log_id}" if log_id is not None else ""
     try:
         response = requests.post(url, headers=headers)
-    except requests.exceptions.RequestException:
-        abort(400, REQ_ERROR_STR)
+    except requests.exceptions.RequestException as exc:
+        abort(400, exc)
     else:
         return response
 
@@ -587,18 +586,19 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
         db.set(get_key(), msgpack.encode(sent_payload_to_stock))
         
         rollback_resp = send_post_request(url, log_id)
+        rollback_resp_status = rollback_resp.status_code
         
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=url,
             to_url=request.url,
-            status=LogStatus.SUCCESS if rollback_resp == 200 else LogStatus.FAILURE,
+            status=LogStatus.SUCCESS if rollback_resp_status == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
         
-        if rollback_resp != 200: # No log on purpose since the fault tolerance should reroll again
+        if rollback_resp_status != 200: # No log on purpose since the fault tolerance should reroll again
             error_flag = True
     
     if error_flag:
@@ -649,18 +649,19 @@ def checkout(order_id: str):
 
         # actually sending the request
         stock_reply = send_post_request(request_url, log_id)
+        stock_reply_status = stock_reply.status_code
 
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
             from_url=request_url,
             to_url=request.url,
-            status=LogStatus.SUCCESS if stock_reply == 200 else LogStatus.FAILURE,
+            status=LogStatus.SUCCESS if stock_reply_status == 200 else LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
-        if stock_reply.status_code != 200:
+        if stock_reply_status != 200:
             rollback_stock(removed_items, log_id)
             
             error_payload = LogOrderValue(
@@ -691,6 +692,7 @@ def checkout(order_id: str):
     db.set(get_key(), msgpack.encode(sent_payload_to_payment))
 
     payment_reply = send_post_request(payment_request_url, log_id)
+    payment_reply_status = payment_reply.status_code
 
     # Create a log entry for the received response (success or failure)
     received_payload_from_payment = LogOrderValue(
@@ -698,13 +700,13 @@ def checkout(order_id: str):
         type=LogType.RECEIVED,
         from_url=payment_request_url,
         to_url=request.url,
-        status=LogStatus.SUCCESS if payment_reply.status_code == 200 else LogStatus.FAILURE,
+        status=LogStatus.SUCCESS if payment_reply_status == 200 else LogStatus.FAILURE,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     db.set(get_key(), msgpack.encode(received_payload_from_payment))
 
-    if payment_reply.status_code != 200:
-        rollback_stock(removed_items)
+    if payment_reply_status != 200:
+        rollback_stock(removed_items, log_id)
         
         error_payload = LogOrderValue(
             id=log_id,
@@ -832,11 +834,34 @@ def fix_fault_tolerance(min_diff: int = 5):
         
         if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
             continue
-            
-        # if "http://order-app/checkout/" in last_log["url"]["from"]:
-        #     for log_entry in reversed(log_list):
-        #         log = log_entry["log"]
         
+        
+        if last_log["url"]["from"] is not None and last_log["url"]["to"] is not None:
+            if "checkout" in last_log["url"]["from"] or "checkout" in last_log["url"]["to"]: # If log was a checkout
+                for log_entry in reversed(log_list):
+                    log = log_entry["log"]
+                    log_type = log["type"]
+                    log_status = log["status"]
+                    
+                    if (log_type == LogType.RECEIVED and log_status == LogStatus.FAILURE) and "stock/add" in log["url"]["from"]:
+                        rollback_flag = True
+                        rollback_url = GATEWAY_URL + "/stock/add/" + log["url"]["from"].split("add/")[1]
+                        rollback_counter = 0
+                        while rollback_flag:
+                            try:
+                                rollback_resp = requests.post(rollback_url)
+                                if rollback_resp.status_code == 200:
+                                    rollback_flag = False
+                            except Exception as e:
+                                app.logger.error(f"Rollback attempt failed: {e}")
+                                if rollback_counter > 10:
+                                    return abort(400, "Failed to rollback")
+                                rollback_counter += 1
+                    
+                    db.delete(log_entry["id"])
+                
+                continue
+                
         for log_entry in reversed(log_list):
             log = log_entry["log"]
             
@@ -850,7 +875,6 @@ def fix_fault_tolerance(min_diff: int = 5):
             
             db.delete(log_entry["id"])
         
-
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
