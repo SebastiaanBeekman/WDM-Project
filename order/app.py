@@ -307,7 +307,7 @@ def create_order(user_id: str):
     # Send the request
     payment_reply = send_get_request(request_url)
     
-    if payment_reply.status_code != 200:
+    if payment_reply.status_code != 200:        
         return abort(400, f"User: {user_id} does not exist!")
     
     order_id = str(uuid.uuid4())
@@ -436,8 +436,6 @@ def add_item(order_id: str, item_id: str, quantity: int):
         pipeline_db.discard()
         
         return abort(400, DB_ERROR_STR)
-    
-    # Fault Tollerance - Crash, undo
 
     # Create a log for the sent response
     sent_payload_to_user = LogOrderValue(

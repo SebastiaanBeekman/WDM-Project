@@ -25,6 +25,28 @@ class TestMicroservices(unittest.TestCase):
         last_create_log = payment_log[user1['log_id']][-1]["log"]
         self.assertEqual(last_create_log['type'], "Sent")
         self.assertEqual(last_create_log["status"], "Success")
+        
+        # Test /user/create with faulty log
+        log1_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log1_resp = tu.create_payment_log(
+            log_id=log1_id,
+            type=LogType.SENT,
+            user_id=user1['user_id'],
+            status=LogStatus.FAILURE,
+        )   
+        self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+        
+        payment_log_count += 1
+        self.assertEqual(int(tu.get_payment_log_count()), payment_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_payment()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_payment_log_count(), payment_log_count)
 
         # Test /user/find
         user2 = tu.find_user(user1['user_id'])
@@ -46,6 +68,28 @@ class TestMicroservices(unittest.TestCase):
         last_add_log = payment_log[user1['log_id']][-1]["log"]
         self.assertEqual(last_add_log['type'], "Sent")
         self.assertEqual(last_add_log["status"], "Success")
+        
+        # Test /add_funds with faulty log
+        log2_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log2_resp = tu.create_payment_log(
+            log_id=log2_id,
+            type=LogType.SENT,
+            user_id=user1['user_id'],
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+        
+        payment_log_count += 1
+        self.assertEqual(int(tu.get_payment_log_count()), payment_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_payment()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_payment_log_count(), payment_log_count)
 
         # Test /pay/
         pay_response = tu.payment_pay(user1['user_id'], 15)
@@ -60,6 +104,28 @@ class TestMicroservices(unittest.TestCase):
         last_pay_log = payment_log[user1['log_id']][-1]["log"]
         self.assertEqual(last_pay_log['type'], "Sent")
         self.assertEqual(last_pay_log["status"], "Success")
+        
+        # Test /pay with faulty log
+        log3_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log3_resp = tu.create_payment_log(
+            log_id=log3_id,
+            type=LogType.SENT,
+            user_id=user1['user_id'],
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log3_resp.status_code))
+        
+        payment_log_count += 1
+        self.assertEqual(int(tu.get_payment_log_count()), payment_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_payment()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_payment_log_count(), payment_log_count)
 
 
     def test_payment_create_contains_faulty_log(self):
@@ -117,6 +183,18 @@ class TestMicroservices(unittest.TestCase):
         self.assertTrue(tu.status_code_is_success(user_entry.status_code))
 
         user_id = user_entry.json()['user_id']
+        
+        # Create an entry for the update log
+        log_resp = tu.create_payment_log(
+            log_id=log_id,
+            type=LogType.UPDATE,
+            user_id=user_id,
+            old_uservalue=UserValue(credit=0),
+        )
+        self.assertTrue(tu.status_code_is_success(log_resp.status_code))
+
+        payment_log_count += 1
+        self.assertEqual(int(tu.get_payment_log_count()), payment_log_count)
 
         # Update the stock of the item
         add_funds_resp = tu.add_credit_to_user_benchmark(user_id, credit)
@@ -126,23 +204,17 @@ class TestMicroservices(unittest.TestCase):
         self.assertTrue(tu.status_code_is_success(find_user_resp.status_code))
         self.assertEqual(find_user_resp.json()['credit'], credit)
 
-        # Create an entry for the update log
-        log2_resp = tu.create_payment_log(
-            log_id=log_id,
-            type=LogType.UPDATE,
-            user_id=user_id,
-            old_uservalue=UserValue(credit=credit),
-        )
-        self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
-
-        payment_log_count += 1
-        self.assertEqual(int(tu.get_payment_log_count()), payment_log_count)
-
         ft_resp = tu.fault_tolerance_payment()
         self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
 
         payment_log_count -= 1
         self.assertEqual(tu.get_payment_log_count(), payment_log_count)
+        
+        # Check whether user balance was reverted
+        find_user_resp = tu.find_user_benchmark(user_id)
+        self.assertTrue(tu.status_code_is_success(find_user_resp.status_code))
+        
+        self.assertEqual(find_user_resp.json()['credit'], 0)
 
 
     def test_pay_contains_faulty_log(self):
@@ -162,7 +234,19 @@ class TestMicroservices(unittest.TestCase):
         add_funds_resp = tu.add_credit_to_user_benchmark(user_id, credit)
         self.assertTrue(tu.status_code_is_success(add_funds_resp.status_code))
 
-        # Update the stock of the item
+        # Create an entry for the update log
+        log_resp = tu.create_payment_log(
+            log_id=log_id,
+            type=LogType.UPDATE,
+            user_id=user_id,
+            old_uservalue=UserValue(credit=credit),
+        )
+        self.assertTrue(tu.status_code_is_success(log_resp.status_code))
+
+        payment_log_count += 1
+        self.assertEqual(int(tu.get_payment_log_count()), payment_log_count)
+        
+        # Update the credit of the user
         pay_resp = tu.payment_pay_benchmark(user_id, credit)
         self.assertTrue(tu.status_code_is_success(pay_resp.status_code))
 
@@ -170,23 +254,17 @@ class TestMicroservices(unittest.TestCase):
         self.assertTrue(tu.status_code_is_success(find_user_resp.status_code))
         self.assertEqual(find_user_resp.json()['credit'], 0)
 
-        # Create an entry for the update log
-        log2_resp = tu.create_payment_log(
-            log_id=log_id,
-            type=LogType.UPDATE,
-            user_id=user_id,
-            old_uservalue=UserValue(credit=credit),
-        )
-        self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
-
-        payment_log_count += 1
-        self.assertEqual(int(tu.get_payment_log_count()), payment_log_count)
-
         ft_resp = tu.fault_tolerance_payment()
         self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
 
         payment_log_count -= 1
         self.assertEqual(tu.get_payment_log_count(), payment_log_count)
+        
+        # Check whether user balance was reverted
+        find_user_resp = tu.find_user_benchmark(user_id)
+        self.assertTrue(tu.status_code_is_success(find_user_resp.status_code))
+        
+        self.assertEqual(find_user_resp.json()['credit'], credit)
 
 
 if __name__ == '__main__':
