@@ -498,7 +498,7 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
     for item_id, quantity in removed_items:
         url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
         
-        rollback_resp = send_post_request(url, log_id)
+        rollback_resp = send_post_request(url)
         rollback_resp_status = rollback_resp.status_code
         
         received_payload_from_stock = LogOrderValue(
