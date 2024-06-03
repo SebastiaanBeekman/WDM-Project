@@ -331,7 +331,6 @@ def create_user():
 
 @app.get('/find_user/<user_id>')
 def find_user(user_id: str):
-    log_id: str | None = request.args.get('log_id')
     log_id = log_id if log_id else str(uuid.uuid4())
 
     # Retrieve user from the database
@@ -349,7 +348,6 @@ def find_user(user_id: str):
 
 @app.post('/add_funds/<user_id>/<amount>')
 def add_credit(user_id: str, amount: int):
-    log_id: str | None = request.args.get('log_id')
     log_id = log_id if log_id else str(uuid.uuid4())
 
     user_entry: UserValue = get_user_from_db(user_id)
@@ -403,7 +401,6 @@ def add_credit(user_id: str, amount: int):
 @app.post('/pay/<user_id>/<amount>')
 def remove_credit(user_id: str, amount: int):
     app.logger.debug(f"Removing {amount} credit from user: {user_id}")  # Keep for benchmarking purposes
-    log_id: str | None = request.args.get('log_id')
     log_id = log_id if log_id else str(uuid.uuid4())
 
     user_entry: UserValue = get_user_from_db(user_id)
