@@ -62,10 +62,7 @@ class LogStockValue(Struct):
     type: LogType | None = None
     status: LogStatus | None = None
     stock_id: str | None = None
-    old_stockvalue: StockValue | None = None
-    new_stockvalue: StockValue | None = None
-    from_url: str | None = None
-    to_url: str | None = None    
+    old_stockvalue: StockValue | None = None  
 
 
 def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | None:
@@ -82,8 +79,6 @@ def get_item_from_db(item_id: str, log_id: str | None = None) -> StockValue | No
             id=log_id if log_id else str(uuid.uuid4()),
             type=LogType.SENT,
             stock_id=item_id,
-            from_url=request.url,
-            to_url=request.referrer,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
@@ -100,19 +95,9 @@ def format_log_entry(log_entry: LogStockValue) -> dict:
         "type": log_entry.type,
         "status": log_entry.status,
         "stock_id": log_entry.stock_id,
-        "stock_value": {
-            "old": {
-                "stock": log_entry.old_stockvalue.stock if log_entry.old_stockvalue else None,
-                "price": log_entry.old_stockvalue.price if log_entry.old_stockvalue else None
-            },
-            "new": {
-                "stock": log_entry.new_stockvalue.stock if log_entry.new_stockvalue else None,
-                "price": log_entry.new_stockvalue.price if log_entry.new_stockvalue else None
-            }
-        },
-        "url": {
-            "from": log_entry.from_url,
-            "to": log_entry.to_url
+        "old_stock_value": {
+            "stock": log_entry.old_stockvalue.stock if log_entry.old_stockvalue else None,
+            "price": log_entry.old_stockvalue.price if log_entry.old_stockvalue else None
         },
         "date_time": log_entry.dateTime
     }
@@ -292,22 +277,11 @@ def remove_stock_benchmark(item_id: str, amount: int):
 #   START OF MICROSERVICE FUNCTIONS
 ########################################################################################################################
 # Log Order: 
-# Success: RECEIVED -> CREATE -> SENT (success)
-# Failure: RECEIVED -> SENT (error)
+# Success: CREATE -> SENT (success)
+# Failure: SENT (error)
 @app.post('/item/create/<price>')
 def create_item(price: int):
     log_id = str(uuid.uuid4())
-
-    # Create a log entry for the receieved request from the user
-    received_payload_from_user = LogStockValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=request.referrer,  # Endpoint that called this
-        to_url=request.url,         # This endpoint
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
 
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
@@ -319,7 +293,6 @@ def create_item(price: int):
         id=log_id,
         type=LogType.CREATE,
         stock_id=item_id,
-        new_stockvalue=stock_value,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
 
@@ -333,8 +306,6 @@ def create_item(price: int):
         error_payload = LogStockValue(
             id=log_id,
             type=LogType.SENT,
-            from_url=request.url,       # This endpoint
-            to_url=request.referrer,    # Endpoint that called this
             stock_id=item_id,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -351,8 +322,6 @@ def create_item(price: int):
     sent_payload_to_user = LogStockValue(
         id=log_id,
         type=LogType.SENT,
-        from_url=request.url,       # This endpoint
-        to_url=request.referrer,    # Endpoint that called this
         stock_id=item_id,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -362,63 +331,24 @@ def create_item(price: int):
     return jsonify({'item_id': item_id, 'log_id': log_id}), 200
 
 
-# Log Order: RECEIVED -> SENT
 # Fault Tollerance: do nothing
 @app.get('/find/<item_id>')
 def find_item(item_id: str):
-    log_id: str | None = request.args.get("log_id")
-    log_id = log_id if log_id else str(uuid.uuid4())
-
-    # Create a log entry for the receieved request from the user
-    received_payload_from_user = LogStockValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=request.referrer,  # Endpoint that called this
-        to_url=request.url,         # This endpoint
-        stock_id=item_id,
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    log_id = str(uuid.uuid4())
 
     # Retrieve the item from the database
     item_entry: StockValue = get_item_from_db(item_id, log_id)
-
-    # Create a log entry for the sent response
-    sent_payload_to_user = LogStockValue(
-        id=log_id,
-        type=LogType.SENT,
-        from_url=request.url,       # This endpoint
-        to_url=request.referrer,    # Endpoint that called this
-        stock_id=item_id,
-        status=LogStatus.SUCCESS,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
     # Return the item
     return jsonify({"stock": item_entry.stock, "price": item_entry.price, "log_id": log_id}), 200
 
 
 # Log Order: 
-# Success: RECEIVED -> UPDATE -> SENT (success)
-# Failure: RECEIVED -> SENT (error)
+# Success: UPDATE -> SENT (success)
+# Failure: SENT (error)
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
-    log_id: str | None = request.args.get("log_id")
-    log_id = log_id if log_id else str(uuid.uuid4())
-    
-    # Create a log entry for the receieved request from the user
-    received_payload_from_user = LogStockValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=request.referrer,  # Endpoint that called this
-        to_url=request.url,         # This endpoint
-        stock_id=item_id,
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    log_id = str(uuid.uuid4())
 
     with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
         item_entry: StockValue = get_item_from_db(item_id)
@@ -433,7 +363,6 @@ def add_stock(item_id: str, amount: int):
             type=LogType.UPDATE,
             stock_id=item_id,
             old_stockvalue=old_item_entry,
-            new_stockvalue=item_entry,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
 
@@ -447,8 +376,6 @@ def add_stock(item_id: str, amount: int):
             error_payload = LogStockValue(
                 id=log_id,
                 type=LogType.SENT,
-                from_url=request.url,       # This endpoint
-                to_url=request.referrer,    # Endpoint that called this
                 stock_id=item_id,
                 status=LogStatus.FAILURE,
                 dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -458,15 +385,11 @@ def add_stock(item_id: str, amount: int):
             pipeline_db.discard()
             
             return abort(400, DB_ERROR_STR)
-        
-        # Fault Tollerance: CRASH - Undo
 
         # Create a log entry for the sent response back to the user
         sent_payload_to_user = LogStockValue(
             id=log_id,
             type=LogType.SENT,
-            from_url=request.url,       # This endpoint
-            to_url=request.referrer,    # Endpoint that called this
             stock_id=item_id,
             status=LogStatus.SUCCESS,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -477,24 +400,11 @@ def add_stock(item_id: str, amount: int):
 
 
 # Log Order: 
-# Success: RECEIVED -> UPDATE -> SENT (success)
-# Failure: RECEIVED -> SENT (error)
+# Success: UPDATE -> SENT (success)
+# Failure: SENT (error)
 @app.post('/subtract/<item_id>/<amount>')
 def remove_stock(item_id: str, amount: int):
-    log_id: str | None = request.args.get("log_id")
-    log_id = log_id if log_id else str(uuid.uuid4())
-    
-    # Create a log entry for the receieved request from the user
-    received_payload_from_user = LogStockValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=request.referrer,  # Endpoint that called this
-        to_url=request.url,         # This endpoint
-        stock_id=item_id,
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
+    log_id = str(uuid.uuid4())
     
     with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
         item_entry: StockValue = get_item_from_db(item_id)
@@ -511,7 +421,6 @@ def remove_stock(item_id: str, amount: int):
                 type=LogType.SENT,
                 stock_id=item_id,
                 old_stockvalue=old_item_entry,
-                new_stockvalue=item_entry,
                 status=LogStatus.FAILURE,
                 dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
             )
@@ -526,7 +435,6 @@ def remove_stock(item_id: str, amount: int):
             type=LogType.UPDATE,
             stock_id=item_id,
             old_stockvalue=old_item_entry,
-            new_stockvalue=item_entry,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
         
@@ -540,8 +448,6 @@ def remove_stock(item_id: str, amount: int):
             error_payload = LogStockValue(
                 id=log_id,
                 type=LogType.SENT,
-                from_url=request.url,       # This endpoint
-                to_url=request.referrer,    # Endpoint that called this
                 stock_id=item_id,
                 status=LogStatus.FAILURE,
                 dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -558,8 +464,6 @@ def remove_stock(item_id: str, amount: int):
         sent_payload_to_user = LogStockValue(
             id=log_id,
             type=LogType.SENT,
-            from_url=request.url,       # This endpoint
-            to_url=request.referrer,    # Endpoint that called this
             stock_id=item_id,
             status=LogStatus.SUCCESS,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -631,7 +535,7 @@ def fix_fault_tolerance(min_diff: int = 5):
             if log_type == LogType.CREATE:
                 db.delete(log_stock_id)
             elif log_type == LogType.UPDATE:
-                log_stock_old = log["stock_value"]["old"]
+                log_stock_old = log["old_stock_value"]
                 db.set(log_stock_id, msgpack.encode(StockValue(stock=log_stock_old["stock"], price=log_stock_old["price"])))
             
             db.delete(log_entry["id"])
