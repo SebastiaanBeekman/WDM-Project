@@ -25,6 +25,28 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_create_log['type'], "Sent")
         self.assertEqual(last_create_log["status"], "Success")
         
+        # Test /stock/create with faulty log
+        log1_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log1_resp = tu.create_stock_log(
+            log_id=log1_id,
+            type=LogType.SENT,
+            stock_id=item1['item_id'],
+            status=LogStatus.FAILURE
+        )
+        self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+        
+        stock_log_count += 1
+        self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_stock()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+        
         # Test /stock/find
         item2 = tu.find_item(item1['item_id'])
         self.assertIn('price', item2)
@@ -46,6 +68,28 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_add_log['type'], "Sent")
         self.assertEqual(last_add_log["status"], "Success")
         
+        # Test /stock/find with faulty log
+        log2_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log2_resp = tu.create_stock_log(
+            log_id=log2_id,
+            type=LogType.SENT,
+            stock_id=item1['item_id'],
+            status=LogStatus.FAILURE
+        )
+        self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+        
+        stock_log_count += 1
+        self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_stock()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+        
         # Test /stock/subtract
         subtract_stock_response = tu.subtract_stock(item1['item_id'], 15)
         self.assertTrue(tu.status_code_is_success(subtract_stock_response))
@@ -59,6 +103,28 @@ class TestMicroservices(unittest.TestCase):
         last_subtract_log = stock_log[item1['log_id']][-1]["log"]
         self.assertEqual(last_subtract_log['type'], "Sent")
         self.assertEqual(last_subtract_log["status"], "Success")
+        
+        # Test /stock/subtract with faulty log
+        log3_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log3_resp = tu.create_stock_log(
+            log_id=log3_id,
+            type=LogType.SENT,
+            stock_id=item1['item_id'],
+            status=LogStatus.FAILURE
+        )
+        self.assertTrue(tu.status_code_is_success(log3_resp.status_code))
+        
+        stock_log_count += 1
+        self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_stock()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_stock_log_count(), stock_log_count)
 
 
     def test_stock_create_contains_faulty_log(self):
@@ -113,14 +179,6 @@ class TestMicroservices(unittest.TestCase):
         self.assertTrue(tu.status_code_is_success(item_entry.status_code))
         
         item_id = item_entry.json()['item_id']
-        
-        # Update the stock of the item
-        add_stock_resp = tu.add_stock_benchmark(item_id, amount)
-        self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
-        
-        find_item_resp = tu.find_item_benchmark(item_id)
-        self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
-        self.assertEqual(find_item_resp.json()['stock'], amount)
             
         # Create an entry for the update log
         log2_resp = tu.create_stock_log(
@@ -133,14 +191,28 @@ class TestMicroservices(unittest.TestCase):
         
         stock_log_count += 1
         self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
+        
+        # Update the stock of the item
+        add_stock_resp = tu.add_stock_benchmark(item_id, amount)
+        self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
+        
+        find_item_resp = tu.find_item_benchmark(item_id)
+        self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
+        self.assertEqual(find_item_resp.json()['stock'], amount)
     
+        # Run fault tolerance
         ft_resp = tu.fault_tolerance_stock()
         self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
         
+        # Check if log count decreased by 1
         stock_log_count -= 1
         self.assertEqual(tu.get_stock_log_count(), stock_log_count)
-    
-            
+        
+        # Check whether stock was updated
+        find_item_resp = tu.find_item_benchmark(item_id)
+        self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
+        self.assertEqual(find_item_resp.json()['stock'], 0)
+         
             
     def test_stock_subtract_contains_faulty_log(self):
         # Get initial log count
@@ -157,14 +229,6 @@ class TestMicroservices(unittest.TestCase):
         
         add_stock_resp = tu.add_stock_benchmark(item_id, amount)
         self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
-        
-        # Update the stock of the item
-        add_stock_resp = tu.subtract_stock_benchmark(item_id, amount)
-        self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
-        
-        find_item_resp = tu.find_item_benchmark(item_id)
-        self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
-        self.assertEqual(find_item_resp.json()['stock'], 0)
             
         # Create an entry for the update log
         log2_resp = tu.create_stock_log(
@@ -178,11 +242,26 @@ class TestMicroservices(unittest.TestCase):
         stock_log_count += 1
         self.assertEqual(int(tu.get_stock_log_count()), stock_log_count)
         
+        # Update the stock of the item
+        add_stock_resp = tu.subtract_stock_benchmark(item_id, amount)
+        self.assertTrue(tu.status_code_is_success(add_stock_resp.status_code))
+        
+        find_item_resp = tu.find_item_benchmark(item_id)
+        self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
+        self.assertEqual(find_item_resp.json()['stock'], 0)
+        
+        # Run fault tolerance
         ft_resp = tu.fault_tolerance_stock()
         self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
         
         stock_log_count -= 1
         self.assertEqual(tu.get_stock_log_count(), stock_log_count)
+        
+        # Check whether stock was updated
+        find_item_resp = tu.find_item_benchmark(item_id)
+        self.assertTrue(tu.status_code_is_success(find_item_resp.status_code))
+        
+        self.assertEqual(find_item_resp.json()['stock'], amount)
 
 if __name__ == '__main__':
     unittest.main()

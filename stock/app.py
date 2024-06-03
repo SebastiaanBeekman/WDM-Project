@@ -385,8 +385,6 @@ def add_stock(item_id: str, amount: int):
             pipeline_db.discard()
             
             return abort(400, DB_ERROR_STR)
-        
-        # Fault Tollerance: CRASH - Undo
 
         # Create a log entry for the sent response back to the user
         sent_payload_to_user = LogStockValue(

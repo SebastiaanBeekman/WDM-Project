@@ -33,6 +33,28 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_create_log['type'], "Sent")
         self.assertEqual(last_create_log["status"], "Success")
         
+        # Test /order/create with faulty log
+        log1_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log1_resp = tu.create_order_log(
+            log_id=log1_id,
+            type=LogType.SENT,
+            order_id=order1['order_id'],
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log1_resp.status_code))
+        
+        order_log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_order()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_order_log_count(), order_log_count)
+        
         # Test /order/find
         order2 = tu.find_order(order1['order_id'])
         self.assertIn('paid', order2)
@@ -62,7 +84,29 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_add_log['type'], "Sent")
         self.assertEqual(last_add_log["status"], "Success")
         
-        # Test checkout
+        # Test /order/add/item with faulty log
+        log2_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log2_resp = tu.create_order_log(
+            log_id=log2_id,
+            type=LogType.SENT,
+            order_id=order1['order_id'],
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log2_resp.status_code))
+        
+        order_log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_order()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_order_log_count(), order_log_count)
+        
+        # Test /checkout
         checkout_response = tu.checkout_order(order1['order_id']).status_code
         self.assertTrue(tu.status_code_is_success(checkout_response))
         
@@ -75,8 +119,49 @@ class TestMicroservices(unittest.TestCase):
         self.assertEqual(last_checkout_log['type'], "Sent")
         self.assertEqual(last_checkout_log["status"], "Success")
         
-        tu.fault_tolerance_order()
+        # Test /checkout with faulty log (stock)
+        log3_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log3_resp = tu.create_order_log(
+            log_id=log3_id,
+            type=LogType.SENT,
+            order_id=order1['order_id'],
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log3_resp.status_code))
+        
+        order_log_count += 1
         self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_order()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_order_log_count(), order_log_count)
+        
+        # Test /checkout with faulty log (payment)
+        log4_id = str(uuid.uuid4())
+        
+        # Create an entry for the Redis error log
+        log4_resp = tu.create_order_log(
+            log_id=log4_id,
+            type=LogType.SENT,
+            order_id=order1['order_id'],
+            status=LogStatus.FAILURE,
+        )
+        self.assertTrue(tu.status_code_is_success(log4_resp.status_code))
+        
+        order_log_count += 1
+        self.assertEqual(int(tu.get_order_log_count()), order_log_count)
+        
+        # Run fault tolerance
+        ft_resp = tu.fault_tolerance_order()
+        self.assertTrue(tu.status_code_is_success(ft_resp.status_code))
+        
+        # Check if log count does not change
+        self.assertEqual(tu.get_order_log_count(), order_log_count)
         
         
     def test_order_create_contains_faulty_log(self):
@@ -110,7 +195,6 @@ class TestMicroservices(unittest.TestCase):
         
         order_log_count += 1
         self.assertEqual(int(tu.get_order_log_count()), order_log_count)
-        
         
         ft_resp = tu.fault_tolerance_order()
         # print(tu.get_order_log_count())

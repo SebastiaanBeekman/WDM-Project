@@ -284,7 +284,6 @@ def remove_credit_benchmark(user_id: str, amount: int):
 def create_user():
     log_id = str(uuid.uuid4())
 
-
     user_id = str(uuid.uuid4())
     user_value = UserValue(credit=0)
 
