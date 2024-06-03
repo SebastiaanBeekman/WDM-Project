@@ -45,13 +45,15 @@ def create_payment_log(log_id: int, type: LogType, status: LogStatus = None, use
     return requests.post(f"{PAYMENT_URL}/payment/log/create", json=log_entry.to_dict())
 
   
-def create_order_log(log_id: int, type: LogType, status: LogStatus = None, order_id: str = None, old_ordervalue: OrderValue = None):
+def create_order_log(log_id: int, type: LogType, status: LogStatus = None, order_id: str = None, old_ordervalue: OrderValue = None, from_url: str = None, to_url: str = None):
     log_entry = LogOrderValue(
         id=log_id,
         type=type if type else None,
         status=status if status else None,
         order_id=order_id if order_id else None,
         old_ordervalue=old_ordervalue if old_ordervalue else None,
+        from_url=from_url if from_url else None,
+        to_url=to_url if to_url else None,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     return requests.post(f"{ORDER_URL}/orders/log/create", json=log_entry.to_dict())
@@ -170,6 +172,9 @@ def add_item_to_order(order_id: str, item_id: str, quantity: int) -> int:
 
 def add_item_to_order_benchmark(order_id: str, item_id: str, quantity: int) -> int:
     return requests.post(f"{ORDER_URL}/orders/addItem/{order_id}/{item_id}/{quantity}/benchmark")
+
+def checkout_benchmark(order_id: str) -> int:
+    return requests.post(f"{ORDER_URL}/orders/checkout/{order_id}/benchmark")
 
 
 def find_order(order_id: str) -> dict:

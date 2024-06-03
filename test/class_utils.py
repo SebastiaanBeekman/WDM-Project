@@ -95,6 +95,8 @@ class LogOrderValue(Struct):
     status: LogStatus | None = None
     order_id: str | None = None
     old_ordervalue: OrderValue | None = None
+    from_url: str | None = None
+    to_url: str | None = None
     
     def to_dict(self):
         result = {}
