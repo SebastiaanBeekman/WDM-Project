@@ -19,23 +19,20 @@ def get_key():
 ########################################################################################################################
 
 
-def create_stock_log(log_id: int, type: LogType, status: LogStatus = None, stock_id: str = None, old_stockvalue: StockValue = None, new_stockvalue: StockValue = None, from_url: str = None, to_url: str = None):
+def create_stock_log(log_id: int, type: LogType, status: LogStatus = None, stock_id: str = None, old_stockvalue: StockValue = None):
     log_entry = LogStockValue(
         id=log_id,
         type=type if type else None,
         status=status if status else None,
         stock_id=stock_id if stock_id else None,
         old_stockvalue=old_stockvalue if old_stockvalue else None,
-        new_stockvalue=new_stockvalue if new_stockvalue else None,
-        from_url=from_url if from_url else None,
-        to_url=to_url if to_url else None,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
 
     return requests.post(f"{STOCK_URL}/stock/log/create", json=log_entry.to_dict())
 
   
-def create_payment_log(log_id: int, type: LogType, status: LogStatus = None, user_id: str = None, old_uservalue: UserValue = None, new_uservalue: UserValue = None, from_url: str = None, to_url: str = None):
+def create_payment_log(log_id: int, type: LogType, status: LogStatus = None, user_id: str = None, old_uservalue: UserValue = None):
     log_entry = LogUserValue(
         id=log_id,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
@@ -43,24 +40,18 @@ def create_payment_log(log_id: int, type: LogType, status: LogStatus = None, use
         status=status,
         user_id=user_id,
         old_uservalue=old_uservalue,
-        new_uservalue=new_uservalue,
-        from_url=from_url,
-        to_url=to_url,
     )
 
     return requests.post(f"{PAYMENT_URL}/payment/log/create", json=log_entry.to_dict())
 
   
-def create_order_log(log_id: int, type: LogType, status: LogStatus = None, order_id: str = None, old_ordervalue: OrderValue = None, new_ordervalue: OrderValue = None, from_url: str = None, to_url: str = None):
+def create_order_log(log_id: int, type: LogType, status: LogStatus = None, order_id: str = None, old_ordervalue: OrderValue = None):
     log_entry = LogOrderValue(
         id=log_id,
         type=type if type else None,
         status=status if status else None,
         order_id=order_id if order_id else None,
         old_ordervalue=old_ordervalue if old_ordervalue else None,
-        new_ordervalue=new_ordervalue if new_ordervalue else None,
-        from_url=from_url if from_url else None,
-        to_url=to_url if to_url else None,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
     return requests.post(f"{ORDER_URL}/orders/log/create", json=log_entry.to_dict())

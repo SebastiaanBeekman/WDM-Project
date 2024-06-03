@@ -35,9 +35,7 @@ class LogStockValue(Struct):
     status: LogStatus | None = None
     stock_id: str | None = None
     old_stockvalue: StockValue | None = None
-    new_stockvalue: StockValue | None = None
-    from_url: str | None = None
-    to_url: str | None = None
+
 
     def to_dict(self):
         result = {}
@@ -66,9 +64,6 @@ class LogUserValue(Struct):
     status: LogStatus | None = None
     user_id: str | None = None
     old_uservalue: UserValue | None = None
-    new_uservalue: UserValue | None = None
-    from_url: str | None = None
-    to_url: str | None = None
 
     def to_dict(self):
         result = {}
@@ -100,9 +95,6 @@ class LogOrderValue(Struct):
     status: LogStatus | None = None
     order_id: str | None = None
     old_ordervalue: OrderValue | None = None
-    new_ordervalue: OrderValue | None = None
-    from_url: str | None = None
-    to_url: str | None = None
     
     def to_dict(self):
         result = {}

@@ -61,7 +61,6 @@ class LogUserValue(Struct):
     status: LogStatus | None = None
     user_id: str | None = None
     old_uservalue: UserValue | None = None
-    new_uservalue: UserValue | None = None
 
 
 def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | None:
@@ -78,8 +77,6 @@ def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | Non
             id=log_id if log_id else str(uuid.uuid4()),
             type=LogType.SENT,
             user_id=user_id,
-            from_url=request.url,
-            to_url=request.referrer,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
@@ -98,18 +95,7 @@ def format_log_entry(log_entry: LogUserValue) -> dict:
         "type": log_entry.type,
         "status": log_entry.status,
         "user_id": log_entry.user_id,
-        "user_value": {
-            "old": {
-                "credit": log_entry.old_uservalue.credit if log_entry.old_uservalue else None
-            },
-            "new": {
-                "credit": log_entry.new_uservalue.credit if log_entry.new_uservalue else None
-            }
-        },
-        "url": {
-            "from": log_entry.from_url,
-            "to": log_entry.to_url
-        },
+        "old_user_value": { "credit": log_entry.old_uservalue.credit if log_entry.old_uservalue else None},
         "date_time": log_entry.dateTime
     }
 
@@ -298,16 +284,6 @@ def remove_credit_benchmark(user_id: str, amount: int):
 def create_user():
     log_id = str(uuid.uuid4())
 
-    # create log entry for the received request
-    received_payload_from_user = LogUserValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=request.referrer,    # Endpoint that called this
-        to_url=request.url,           # This endpoint
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
 
     user_id = str(uuid.uuid4())
     user_value = UserValue(credit=0)
@@ -317,7 +293,6 @@ def create_user():
         id=log_id,
         type=LogType.CREATE,
         user_id=user_id,
-        new_uservalue=user_value,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
 
@@ -332,8 +307,6 @@ def create_user():
             id=log_id,
             type=LogType.SENT,
             user_id=user_id,
-            from_url=request.url,
-            to_url=request.referrer,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
@@ -347,8 +320,6 @@ def create_user():
     sent_payload_to_user = LogUserValue(
         id=log_id,
         type=LogType.SENT,
-        from_url=request.url,     # This endpoint
-        to_url=request.referrer,  # Endpoint that called this
         user_id=user_id,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -363,32 +334,8 @@ def find_user(user_id: str):
     log_id: str | None = request.args.get('log_id')
     log_id = log_id if log_id else str(uuid.uuid4())
 
-    # create log entry for the received request from the user
-    received_payload_from_user = LogUserValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=request.referrer,    # Endpoint that called this
-        to_url=request.url,           # This endpoint
-        user_id=user_id,
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
-
     # Retrieve user from the database
     user_entry: UserValue = get_user_from_db(user_id)
-
-    # Create log entry for the sent response
-    sent_payload_to_user = LogUserValue(
-        id=log_id,
-        type=LogType.SENT,
-        from_url=request.url,
-        to_url=request.referrer,
-        user_id=user_id,
-        status=LogStatus.SUCCESS,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(sent_payload_to_user))
 
     # Return the user information
     return jsonify(
@@ -405,18 +352,6 @@ def add_credit(user_id: str, amount: int):
     log_id: str | None = request.args.get('log_id')
     log_id = log_id if log_id else str(uuid.uuid4())
 
-    # Create a log entry for the receieved request from the user
-    received_payload_from_user = LogUserValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        status=LogStatus.PENDING,
-        user_id=user_id,
-        from_url=request.referrer,
-        to_url=request.url,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
-
     user_entry: UserValue = get_user_from_db(user_id)
     old_user_entry: UserValue = deepcopy(user_entry)
 
@@ -429,7 +364,6 @@ def add_credit(user_id: str, amount: int):
         type=LogType.UPDATE,
         user_id=user_id,
         old_uservalue=old_user_entry,
-        new_uservalue=user_entry,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
 
@@ -444,8 +378,6 @@ def add_credit(user_id: str, amount: int):
             id=log_id,
             type=LogType.SENT,
             user_id=user_id,
-            from_url=request.url,
-            to_url=request.referrer,
             status=LogStatus.FAILURE,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
@@ -459,8 +391,6 @@ def add_credit(user_id: str, amount: int):
     sent_payload_to_user = LogUserValue(
         id=log_id,
         type=LogType.SENT,
-        from_url=request.url,     # This endpoint
-        to_url=request.referrer,  # Endpoint that called this
         user_id=user_id,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -476,18 +406,6 @@ def remove_credit(user_id: str, amount: int):
     log_id: str | None = request.args.get('log_id')
     log_id = log_id if log_id else str(uuid.uuid4())
 
-    # create log entry for the received request
-    received_payload_from_user = LogUserValue(
-        id=log_id,
-        type=LogType.RECEIVED,
-        from_url=request.referrer,    # Endpoint that called this
-        to_url=request.url,           # This endpoint
-        user_id=user_id,
-        status=LogStatus.PENDING,
-        dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
-    )
-    db.set(get_key(), msgpack.encode(received_payload_from_user))
-
     user_entry: UserValue = get_user_from_db(user_id)
     old_user_entry: UserValue = deepcopy(user_entry)
 
@@ -501,10 +419,7 @@ def remove_credit(user_id: str, amount: int):
             type=LogType.SENT,
             status=LogStatus.FAILURE,
             old_uservalue=old_user_entry,
-            new_uservalue=user_entry,
             user_id=user_id,
-            from_url=request.url,
-            to_url=request.referrer,
             dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
         )
         log_key = get_key()
@@ -518,7 +433,6 @@ def remove_credit(user_id: str, amount: int):
         type=LogType.UPDATE,
         user_id=user_id,
         old_uservalue=old_user_entry,
-        new_uservalue=user_entry,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
 
@@ -548,8 +462,6 @@ def remove_credit(user_id: str, amount: int):
     sent_payload_to_user = LogUserValue(
         id=log_id,
         type=LogType.SENT,
-        from_url=request.url,     # This endpoint
-        to_url=request.referrer,  # Endpoint that called this
         user_id=user_id,
         status=LogStatus.SUCCESS,
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -602,7 +514,7 @@ def fix_fault_tolerance(min_diff: int = 5):
                 db.delete(log_user_id)
             elif log_type == LogType.UPDATE:
                 # raise ValueError(f"HERE {log.keys()}")
-                log_user_old = log["user_value"]["old"]
+                log_user_old = log["old_user_value"]
                 db.set(log_user_id, msgpack.encode(UserValue(credit=log_user_old["credit"])))
 
             db.delete(log_entry["id"])
