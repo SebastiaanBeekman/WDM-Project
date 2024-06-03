@@ -334,7 +334,7 @@ def create_item(price: int):
 # Fault Tollerance: do nothing
 @app.get('/find/<item_id>')
 def find_item(item_id: str):
-    log_id = log_id if log_id else str(uuid.uuid4())
+    log_id = str(uuid.uuid4())
 
     # Retrieve the item from the database
     item_entry: StockValue = get_item_from_db(item_id, log_id)
@@ -348,7 +348,7 @@ def find_item(item_id: str):
 # Failure: SENT (error)
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
-    log_id = log_id if log_id else str(uuid.uuid4())
+    log_id = str(uuid.uuid4())
 
     with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
         item_entry: StockValue = get_item_from_db(item_id)
@@ -406,7 +406,7 @@ def add_stock(item_id: str, amount: int):
 # Failure: SENT (error)
 @app.post('/subtract/<item_id>/<amount>')
 def remove_stock(item_id: str, amount: int):
-    log_id = log_id if log_id else str(uuid.uuid4())
+    log_id = str(uuid.uuid4())
     
     with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
         item_entry: StockValue = get_item_from_db(item_id)
