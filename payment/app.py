@@ -62,8 +62,6 @@ class LogUserValue(Struct):
     user_id: str | None = None
     old_uservalue: UserValue | None = None
     new_uservalue: UserValue | None = None
-    from_url: str | None = None
-    to_url: str | None = None
 
 
 def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | None:
