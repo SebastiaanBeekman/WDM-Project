@@ -195,6 +195,6 @@ pytest
 
 * Zoya van Meel: TBD
 * Nina Oosterlaar: Creating code for the logs, creating the ids microservice, contributed with testing fault tolerance, optimizing the final product.
-* Sebastiaan Beekman: I worked on logging, developed fault tolerance, implemented RedLock, wrote most of the tests, and did general codebase refactoring (e.g. comments, extra abort checks, structuring). I also wrote the README and supported the group whene needed.
+* Sebastiaan Beekman: I worked on logging, developed fault tolerance, implemented RedLock, wrote most of the tests, and did general codebase refactoring (e.g. comments, extra abort checks, structuring). I also wrote the README and supported the group where needed.
 
 We all contributed equally to the architecture and design of the code.
