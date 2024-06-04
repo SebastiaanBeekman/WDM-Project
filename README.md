@@ -195,4 +195,4 @@ pytest
 
 * Zoya van Meel: TBD
 * Nina Oosterlaar: TBD
-* Sebastiaan Beekman: TBD
+* Sebastiaan Beekman: I worked on the code, the tests, and wrote the documentation (`README`). We all contributed equally to the architecture and design of the code.
