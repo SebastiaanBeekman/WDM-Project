@@ -195,4 +195,6 @@ pytest
 
 * Zoya van Meel: TBD
 * Nina Oosterlaar: Creating code for the logs, creating the ids microservice, contributed with testing fault tolerance, optimizing the final product.
-* Sebastiaan Beekman: I worked on the code, the tests, and wrote the documentation (`README`). We all contributed equally to the architecture and design of the code.
+* Sebastiaan Beekman: I worked on the code for logging, developed fault tolerance, and created the tests. I also wrote the README and supported the group whene needed.
+
+We all contributed equally to the architecture and design of the code.
