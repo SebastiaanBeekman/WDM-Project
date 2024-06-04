@@ -144,7 +144,6 @@ def sort_logs(logs: list[dict]):
 
 
 def get_log_from_db(log_id: str) -> LogOrderValue | None:
-    # get serialized data
     try:
         entry: bytes = db.get(log_id)
     except redis.exceptions.RedisError:
@@ -181,21 +180,6 @@ def find_all_logs():
         return abort(500, 'Failed to retrieve logs from the database')
 
 
-@app.get('/logs_from/<number>')
-def find_all_logs_from(number: int):
-    """This function is still broken."""
-    try:
-        # Retrieve all keys starting with "log:" from Redis
-        log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
-
-        # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
-
-        return jsonify({'logs': logs}), 200
-    except redis.exceptions.RedisError:
-        return abort(500, 'Failed to retrieve logs from the database')
-
-
 def find_all_logs_time(time: datetime, min_diff: int = 5):
     try:
         # Calculate the range
@@ -204,10 +188,11 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
 
         # Create a broad pattern to fetch all potential keys
         broad_pattern = "log:*"
+        
         # Retrieve all keys matching the broad pattern
         potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
 
-        # Filter keys based on the regex pattern
+        # Filter keys based on the timestamp
         logs = []
         for key in potential_keys:
             timestamp_str = key.split(":")[-1][:20]
@@ -220,7 +205,8 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
             
             if not raw_data:
                 continue
-                
+            
+            # Decode the raw data into a LogOrderValue object
             log_entry = msgpack.decode(raw_data, type=LogOrderValue)
             logs.append({"id": key, "log": format_log_entry(log_entry)})
 
@@ -238,6 +224,7 @@ def find_sorted_logs(min_diff: int):
     return jsonify(sorted_logs), 200    
 
 
+# For testing purposes only
 @app.post("/log/create")
 def create_log():
     str_dict_log_entry = str(request.get_json())
@@ -275,6 +262,7 @@ def find_order_benchmark(order_id: str):
     
     return jsonify({"user_id": order_entry.user_id, "total_cost": order_entry.total_cost, "items": order_entry.items, "paid": order_entry.paid}), 200
 
+
 @app.post('/addItem/<order_id>/<item_id>/<quantity>/benchmark')
 def add_item_benchmark(order_id: str, item_id: str, quantity: int):
     entry: OrderValue = db.get(order_id)
@@ -289,21 +277,18 @@ def add_item_benchmark(order_id: str, item_id: str, quantity: int):
         db.set(order_id, msgpack.encode(order_entry))
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
-    # return jsonify({"order_id": order_id, "total_cost": order_entry.total_cost}), 200
-    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}",
-                    status=200)
+    
+    return Response(f"Item: {item_id} added to: {order_id} price updated to: {order_entry.total_cost}", status=200)
 
 
 @app.post('/checkout/<order_id>/benchmark')
 def checkout_benchmark(order_id: str):
     order_entry: OrderValue = get_order_from_db(order_id)
 
-    # get the quantity per item
     items_quantities: dict[str, int] = defaultdict(int)
     for item_id, quantity in order_entry.items:
         items_quantities[item_id] += quantity
 
-    # The removed items will contain the items that we already have successfully subtracted stock from for rollback purposes.
     removed_items: list[tuple[str, int]] = []
     for item_id, quantity in items_quantities.items():
         request_url = f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}"
@@ -342,15 +327,17 @@ def checkout_benchmark(order_id: str):
 def create_order(user_id: str):
     log_id = str(uuid.uuid4())
     
-    # Check if user exists
+    # Url for the request to the payment service
     request_url = f"{GATEWAY_URL}/payment/find_user/{user_id}"
 
-    # Send the request
+    # Send request to the payment service to check if the user exists
     payment_reply = send_get_request(request_url)
     
+    # Request failed because user does not exist
     if payment_reply.status_code != 200:        
         return abort(400, f"User: {user_id} does not exist!")
     
+    # Create the order
     order_id = str(uuid.uuid4())
     order_value = OrderValue(
         paid=False, 
@@ -387,7 +374,8 @@ def create_order(user_id: str):
         pipeline_db.discard()
         
         return abort(400, DB_ERROR_STR)
-        
+     
+    # Create a log for the sent to user response   
     sent_payload_to_user = LogOrderValue(
         id=log_id,
         type=LogType.SENT,
@@ -403,7 +391,6 @@ def create_order(user_id: str):
 
 @app.get('/find/<order_id>')
 def find_order(order_id: str):
-    # Retrieve the order value from the database
     order_entry: OrderValue = get_order_from_db(order_id)
     
     # Return the order
@@ -415,17 +402,17 @@ def find_order(order_id: str):
             "user_id": order_entry.user_id,
             "total_cost": order_entry.total_cost,
         }
-    )
+    ), 200
 
 
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 def add_item(order_id: str, item_id: str, quantity: int):
     log_id = str(uuid.uuid4())
 
-    # Create a log entry for the sent request to the stock service
+    # Url for the request to the stock service
     request_url = f"{GATEWAY_URL}/stock/find/{item_id}"
 
-    # Send the request
+    # Send request to the stock service to check if the item exists
     stock_reply = send_get_request(request_url)
 
     # Request failed because item does not exist
@@ -441,10 +428,11 @@ def add_item(order_id: str, item_id: str, quantity: int):
         db.set(get_key(), msgpack.encode(error_payload))
         return abort(400, f"Item: {item_id} does not exist!")
 
-    # Locally update the order value
+    # Get the order from the database and create a copy of it for rollback purposes
     order_entry: OrderValue = get_order_from_db(order_id)
     old_order_entry = deepcopy(order_entry)
     
+    # Locally update the order locally
     item_json: dict = stock_reply.json()
     order_entry.items.append((item_id, int(quantity)))
     order_entry.total_cost += int(quantity) * item_json["price"]
@@ -498,9 +486,11 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
     for item_id, quantity in removed_items:
         url = f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}"
         
+        # Send request to the stock service to add the stock back
         rollback_resp = send_post_request(url)
         rollback_resp_status = rollback_resp.status_code
         
+        # Create a log entry for the received response (success or failure)
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
@@ -511,9 +501,11 @@ def rollback_stock(removed_items: list[tuple[str, int]], log_id: str | None = No
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
         
+        # If one of the rollbacks failed, set the error flag to True
         if rollback_resp_status != 200: # No log on purpose since the fault tolerance should reroll again
             error_flag = True
     
+    # If one of the rollbacks failed, return an error
     if error_flag:
         return abort(400, f"Failed to rollback")
 
@@ -524,6 +516,7 @@ def checkout(order_id: str):
     
     log_id = str(uuid.uuid4())
 
+    # Get the order from the database and create a copy of it for rollback purposes
     order_entry: OrderValue = get_order_from_db(order_id)
     old_order_entry = deepcopy(order_entry)
 
@@ -536,13 +529,14 @@ def checkout(order_id: str):
     removed_items: list[tuple[str, int]] = []
     for item_id, quantity in items_quantities.items():
 
-        # Create a log entry for the sent request
+        # Url for the request to the stock service
         request_url = f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}"
 
-        # actually sending the request
+        # Send request to the stock service to subtract the stock
         stock_reply = send_post_request(request_url)
         stock_reply_status = stock_reply.status_code
 
+        # Create a log entry for the received response (success or failure)
         received_payload_from_stock = LogOrderValue(
             id=log_id,
             type=LogType.RECEIVED,
@@ -553,6 +547,7 @@ def checkout(order_id: str):
         )
         db.set(get_key(), msgpack.encode(received_payload_from_stock))
 
+        # If the stock request failed, rollback the stock, create a log, and return an error
         if stock_reply_status != 200:
             rollback_stock(removed_items, log_id)
             
@@ -570,8 +565,10 @@ def checkout(order_id: str):
         
         removed_items.append((item_id, quantity))
 
+    # Url for the request to the payment service
     payment_request_url = f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}"
 
+    # Send request to the payment service to pay for the order
     payment_reply = send_post_request(payment_request_url)
     payment_reply_status = payment_reply.status_code
 
@@ -586,6 +583,7 @@ def checkout(order_id: str):
     )
     db.set(get_key(), msgpack.encode(received_payload_from_payment))
 
+    # If the payment request failed, rollback the stock, create a log, and return an error
     if payment_reply_status != 200:
         rollback_stock(removed_items, log_id)
         
@@ -600,9 +598,11 @@ def checkout(order_id: str):
         db.set(get_key(), msgpack.encode(error_payload))
         
         abort(400, "User out of credit")
-    
+
+    # Locally update the order
     order_entry.paid = True
     
+    # Create a log entry for the update request
     update_payload = LogOrderValue(
         id=log_id,
         type=LogType.UPDATE,
@@ -611,6 +611,7 @@ def checkout(order_id: str):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f"),
     )
     
+    # Set the log entry and the updated order value in the pipeline
     log_key = get_key()
     pipeline_db.set(log_key, msgpack.encode(update_payload))
     pipeline_db.set(order_id, msgpack.encode(order_entry))
@@ -647,7 +648,7 @@ def checkout(order_id: str):
     app.logger.debug("Checkout successful") # Keep this for benchmarking purposes
     return Response(f"Checkout successful, log: {log_key}", status=200)
 
-
+# Function to get an idempotent key from the ID service
 def get_key():
     try:
         response = requests.get(f"{GATEWAY_URL}/ids/create")
@@ -656,7 +657,7 @@ def get_key():
     else:
         return response.text
 
-# Can Ignore
+# Can ignore
 @app.post('/batch_init/<n>/<n_items>/<n_users>/<item_price>')
 def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
     n = int(n)
@@ -682,40 +683,27 @@ def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for orders successful"})
 
-
-@app.get('/log_consistency')
-def fix_consistency():
-    time: datetime = datetime.now()
-    logs = find_all_logs_time(time, 1)
-    
-    log_dict = defaultdict(list)
-    for log in logs:
-        log_dict[log["log"]["id"]].append(log)
-    
-    for key in log_dict:
-        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
-    
-    return log_dict
-
-
+# Function to call the fault tolerance function for testing purposes
 @app.get('/fault_tolerance/<min_diff>')
 def test_fault_tolerance(min_diff: int):
     fix_fault_tolerance(int(min_diff))
     return jsonify({"msg": "Fault Tollerance Successful"}), 200
 
-
+# Fault tolerance function
 def fix_fault_tolerance(min_diff: int = 5):
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, int(min_diff))
     sorted_logs = sort_logs(logs)
     
+    # Loop through log arrays with the same log_id
     for _, log_list in sorted_logs.items():
         last_log = log_list[-1]["log"]
         
+        # Check if the last log was finished 'properly'
         if last_log["status"] in [LogStatus.SUCCESS, LogStatus.FAILURE] and last_log["type"] == LogType.SENT: # If log was finished properly
             continue
         
-        
+        # Check if the last log was a checkout log
         if last_log["url"]["from"] is not None and last_log["url"]["to"] is not None:
             if "checkout" in last_log["url"]["from"] or "checkout" in last_log["url"]["to"]: # If log was a checkout
                 for log_entry in reversed(log_list):
@@ -723,6 +711,7 @@ def fix_fault_tolerance(min_diff: int = 5):
                     log_type = log["type"]
                     log_status = log["status"]
                     
+                    # If the log was a checkout log and failed during the rollback, rollback the stock again
                     if (log_type == LogType.RECEIVED and log_status == LogStatus.FAILURE) and "stock/add" in log["url"]["from"]:
                         rollback_flag = True
                         rollback_url = GATEWAY_URL + "/stock/add/" + log["url"]["from"].split("add/")[1]
@@ -741,7 +730,8 @@ def fix_fault_tolerance(min_diff: int = 5):
                     db.delete(log_entry["id"])
                 
                 continue
-                
+        
+        # If the last log was not finished properly, rollback the changes (if not checkout) and delete the logs
         for log_entry in reversed(log_list):
             log = log_entry["log"]
             
@@ -761,7 +751,7 @@ if __name__ == '__main__':
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
-    # app.logger.setLevel(gunicorn_logger.level)
+    app.logger.setLevel(gunicorn_logger.level)
     
-    app.logger.setLevel(logging.DEBUG)
-    # fix_fault_tolerance()
+    # app.logger.setLevel(logging.DEBUG)
+    fix_fault_tolerance()

@@ -87,8 +87,6 @@ def get_user_from_db(user_id: str, log_id: str | None = None) -> UserValue | Non
 ########################################################################################################################
 #   START OF LOG FUNCTIONS
 ########################################################################################################################
-
-
 def format_log_entry(log_entry: LogUserValue) -> dict:
     return {
         "id": log_entry.id,
@@ -151,21 +149,6 @@ def find_all_logs():
         return abort(500, 'Failed to retrieve logs from the database')
 
 
-@app.get('/logs_from/<number>')
-def find_all_logs_from(number: int):
-    """This function is still broken."""
-    try:
-        # Retrieve all keys starting with "log:" from Redis
-        log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
-
-        # Retrieve values corresponding to the keys
-        logs = [{"key": key, "log": msgpack.decode(db.get(key))} for key in log_keys]
-
-        return jsonify({'logs': logs}), 200
-    except redis.exceptions.RedisError:
-        return abort(500, 'Failed to retrieve logs from the database')
-
-
 def find_all_logs_time(time: datetime, min_diff: int = 5):
     try:
         # Calculate the range
@@ -178,7 +161,7 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
         # Retrieve all keys matching the broad pattern
         potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
 
-        # Filter keys based on the regex pattern
+        # Filter keys based on the timestamp
         logs = []
         for key in potential_keys:
             timestamp_str = key.split(":")[-1][:20]
@@ -191,7 +174,8 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
 
             if not raw_data:
                 continue
-
+            
+            # Decode the raw data into a LogUserValue object
             log_entry = msgpack.decode(raw_data, type=LogUserValue)
             logs.append({"id": key, "log": format_log_entry(log_entry)})
 
@@ -209,6 +193,7 @@ def find_sorted_logs(min_diff: int):
     return jsonify(sorted_logs), 200
 
 
+# For testing purposes only
 @app.post('/log/create')
 def create_log():
     str_dict_log_entry = str(request.get_json())
@@ -284,6 +269,7 @@ def remove_credit_benchmark(user_id: str, amount: int):
 def create_user():
     log_id = str(uuid.uuid4())
 
+    # Create a new user
     user_id = str(uuid.uuid4())
     user_value = UserValue(credit=0)
 
@@ -330,17 +316,12 @@ def create_user():
 
 @app.get('/find_user/<user_id>')
 def find_user(user_id: str):
-    log_id = str(uuid.uuid4())
-
-    # Retrieve user from the database
     user_entry: UserValue = get_user_from_db(user_id)
 
-    # Return the user information
     return jsonify(
         {
             "user_id": user_id,
             "credit": user_entry.credit,
-            "log_id": log_id
         }
     ), 200
 
@@ -349,10 +330,11 @@ def find_user(user_id: str):
 def add_credit(user_id: str, amount: int):
     log_id = str(uuid.uuid4())
 
+    # Get the user from the database and create a copy of it for rollback purposes
     user_entry: UserValue = get_user_from_db(user_id)
     old_user_entry: UserValue = deepcopy(user_entry)
 
-    # Update credit
+    # Update credit locally
     user_entry.credit += int(amount)
 
     # Create a log entry for the updated user
@@ -364,7 +346,7 @@ def add_credit(user_id: str, amount: int):
         dateTime=datetime.now().strftime("%Y%m%d%H%M%S%f")
     )
 
-    # update database
+    # Set the log entry and the updated item in the pipeline
     log_key = get_key()
     pipeline_db.set(log_key, msgpack.encode(update_payload))
     pipeline_db.set(user_id, msgpack.encode(user_entry))
@@ -400,14 +382,17 @@ def add_credit(user_id: str, amount: int):
 @app.post('/pay/<user_id>/<amount>')
 def remove_credit(user_id: str, amount: int):
     app.logger.debug(f"Removing {amount} credit from user: {user_id}")  # Keep for benchmarking purposes
+    
     log_id = str(uuid.uuid4())
 
+    # Get the user from the database and create a copy of it for rollback purposes
     user_entry: UserValue = get_user_from_db(user_id)
     old_user_entry: UserValue = deepcopy(user_entry)
 
-    # Update credit
+    # Update credit locally
     user_entry.credit -= int(amount)
 
+    # Check if the user has enough credit
     if user_entry.credit < 0:
         # create log entry for the error
         sent_log = LogUserValue(
@@ -466,7 +451,7 @@ def remove_credit(user_id: str, amount: int):
 
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}, log_key: {log_key}", status=200)
 
-
+# Function to geet an idempotent key from the ID service
 def get_key():
     try:
         response = requests.get(f"{GATEWAY_URL}/ids/create")
@@ -475,7 +460,7 @@ def get_key():
     else:
         return response.text
 
-
+# Can ignore
 @app.post('/batch_init/<n>/<starting_money>')
 def batch_init_users(n: int, starting_money: int):
     """This function apparenlty boeit niet."""
@@ -489,7 +474,13 @@ def batch_init_users(n: int, starting_money: int):
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for users successful"})
 
+# Function to call the fault tolerance function for testing purposes
+@app.get('/fault_tolerance/<min_diff>')
+def test_fault_tolerance(min_diff: int):
+    fix_fault_tolerance(int(min_diff))
+    return jsonify({"msg": "Fault Tolerance Successful"}), 200
 
+# Fault tolerance function
 def fix_fault_tolerance(min_diff: int = 5):
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, int(min_diff))
@@ -516,12 +507,6 @@ def fix_fault_tolerance(min_diff: int = 5):
             db.delete(log_entry["id"])
 
 
-@app.get('/fault_tolerance/<min_diff>')
-def test_fault_tolerance(min_diff: int):
-    fix_fault_tolerance(int(min_diff))
-    return jsonify({"msg": "Fault Tolerance Successful"}), 200
-
-
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
 else:
@@ -530,3 +515,4 @@ else:
     app.logger.setLevel(gunicorn_logger.level)
     
     # app.logger.setLevel(logging.DEBUG)
+    fix_fault_tolerance()

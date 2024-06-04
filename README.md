@@ -174,6 +174,23 @@ The log parser plays a crucial role in maintaining system reliability by:
     curl -X POST http://127.0.0.1:8000/stock/item/create/3
     ```
 
+## Tests
+
+The project includes a set of basic correctness tests to ensure the functionality and reliability of the entire system. These tests are located in the `test` folder and can be run using `pytest`. Each test makes use of the logs which are created to track the state of the system. By iteratively creating logs and verifying the behaviour of the system, each microservice can be simulated and testes properly. 
+
+### Test Overview
+- **Order Service Tests**: Validate order creation, retrieval, and updates.
+- **Payment Service Tests**: Ensure the user and payment processing logic works correctly.
+- **Stock Service Tests**: Check stock creation, addition, and retrieval functionalities.
+
+### Running the Tests
+
+To run the tests, navigate to the `test` folder and execute:
+
+```sh
+pytest
+```
+
 ## Contributions
 
 * Zoya van Meel: TBD

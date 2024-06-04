@@ -11,7 +11,6 @@ from ast import literal_eval
 
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response, request
-# from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 
 from redlock import RedLock
@@ -150,21 +149,7 @@ def find_all_logs():
         return jsonify({'logs': logs}), 200
     except redis.exceptions.RedisError:
         return abort(500, 'Failed to retrieve logs from the database')
-
-
-@app.get('/logs_from/<number>')
-def find_all_logs_from(number: int):
-    """This function is still broken."""
-    try:
-        # Retrieve all keys starting with "log:[number]" from Redis
-        log_keys = [key.decode('utf-8') for key in db.keys(f"log:{number}*")]
-
-        # Retrieve values corresponding to the keys
-        logs = [{"id": key, "log": format_log_entry(msgpack.decode(db.get(key), type=LogStockValue))} for key in log_keys]
-
-        return jsonify({'logs': logs}), 200
-    except redis.exceptions.RedisError:
-        return abort(500, 'Failed to retrieve logs from the database')
+    
     
 def find_all_logs_time(time: datetime, min_diff: int = 5):
     try:
@@ -178,7 +163,7 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
         # Retrieve all keys matching the broad pattern
         potential_keys = [key.decode('utf-8') for key in db.keys(broad_pattern)]
 
-        # Filter keys based on the regex pattern
+        # Filter keys based on the timestamp
         logs = []
         for key in potential_keys:
             timestamp_str = key.split(":")[-1][:20]
@@ -191,7 +176,8 @@ def find_all_logs_time(time: datetime, min_diff: int = 5):
             
             if not raw_data:
                 continue
-                
+            
+            # Decode the raw data into a LogUserValue object
             log_entry = msgpack.decode(raw_data, type=LogStockValue)
             logs.append({"id": key, "log": format_log_entry(log_entry)})
 
@@ -276,13 +262,11 @@ def remove_stock_benchmark(item_id: str, amount: int):
 ########################################################################################################################
 #   START OF MICROSERVICE FUNCTIONS
 ########################################################################################################################
-# Log Order: 
-# Success: CREATE -> SENT (success)
-# Failure: SENT (error)
 @app.post('/item/create/<price>')
 def create_item(price: int):
     log_id = str(uuid.uuid4())
 
+    # Create the item
     item_id = str(uuid.uuid4())
     stock_value = StockValue(stock=0, price=int(price))
     
@@ -315,8 +299,6 @@ def create_item(price: int):
         pipeline_db.discard()
         
         return abort(400, DB_ERROR_STR)
-    
-    # Fault Tollerance: CRASH - Undo
 
     # Create a log entry for the sent response back to the user
     sent_payload_to_user = LogStockValue(
@@ -331,30 +313,27 @@ def create_item(price: int):
     return jsonify({'item_id': item_id, 'log_id': log_id}), 200
 
 
-# Fault Tollerance: do nothing
 @app.get('/find/<item_id>')
 def find_item(item_id: str):
     log_id = str(uuid.uuid4())
 
-    # Retrieve the item from the database
     item_entry: StockValue = get_item_from_db(item_id, log_id)
 
-    # Return the item
     return jsonify({"stock": item_entry.stock, "price": item_entry.price, "log_id": log_id}), 200
 
 
-# Log Order: 
-# Success: UPDATE -> SENT (success)
-# Failure: SENT (error)
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
     log_id = str(uuid.uuid4())
 
+    # Use RedLock to prevent dirty reads
     with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
+        
+        # Get the item from the database and create a copy of it for the rollback purposes
         item_entry: StockValue = get_item_from_db(item_id)
         old_item_entry: StockValue = deepcopy(item_entry)
         
-        # Update the stock value
+        # Update the stock locally
         item_entry.stock += int(amount)
         
         # Create a log entry for the update request
@@ -399,23 +378,24 @@ def add_stock(item_id: str, amount: int):
         return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_id}", status=200)
 
 
-# Log Order: 
-# Success: UPDATE -> SENT (success)
-# Failure: SENT (error)
 @app.post('/subtract/<item_id>/<amount>')
 def remove_stock(item_id: str, amount: int):
     log_id = str(uuid.uuid4())
     
+    # Use RedLock to prevent dirty reads
     with RedLock(f"{item_id}-lock", connection_details=[db.connection_pool.connection_kwargs], retry_times=20, retry_delay=100):
+        
+        # Get the item from the database and create a copy of it for the rollback purposes
         item_entry: StockValue = get_item_from_db(item_id)
         old_item_entry: StockValue = deepcopy(item_entry)
         
-        # Update stock
+        # Update stock locally
         item_entry.stock -= int(amount)
+        
         app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}") # Keep this for benchmarking purposes
         
+        # Check if the stock is below zero
         if item_entry.stock < 0:
-            # Create a log entry for the error
             error_payload = LogStockValue(
                 id=log_id,
                 type=LogType.SENT,
@@ -458,8 +438,6 @@ def remove_stock(item_id: str, amount: int):
             
             return abort(400, DB_ERROR_STR)
         
-        # Fault Tollerance: CRASH - Undo
-        
         # Create a log entry for the sent response back to the user
         sent_payload_to_user = LogStockValue(
             id=log_id,
@@ -472,7 +450,7 @@ def remove_stock(item_id: str, amount: int):
         
         return Response(f"Item: {item_id} stock updated to: {item_entry.stock}, log_id: {log_id}", status=200)
 
-
+# Function to get an idempotent key from the ID service
 def get_key():
     try:
         response = requests.get(f"{GATEWAY_URL}/ids/create")
@@ -481,7 +459,7 @@ def get_key():
     else:
         return response.text
 
-
+# Can ignore
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
 def batch_init_users(n: int, starting_stock: int, item_price: int):
     """This function apparenlty boeit niet."""
@@ -499,24 +477,13 @@ def batch_init_users(n: int, starting_stock: int, item_price: int):
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
     
-
-def fix_consistency():
-    time: datetime = datetime.now()
-    logs = find_all_logs_time(time, 1)
-    
-    log_dict = defaultdict(list)
-    for log in logs:
-        log_dict[log["log"]["id"]].append(log)
-    
-    for key in log_dict:
-        log_dict[key] = sorted(log_dict[key], key=lambda x: x["log"]["date_time"])
-
+# Function to call the fault tolerance function for testing purposes
 @app.get('/fault_tolerance/<min_diff>')
 def test_fault_tolerance(min_diff: int):
     fix_fault_tolerance(int(min_diff))
     return jsonify({"msg": "Fault Tollerance Successful"}), 200
 
-
+# Fault tolerance function
 def fix_fault_tolerance(min_diff: int = 5):
     time: datetime = datetime.now()
     logs = find_all_logs_time(time, int(min_diff))
@@ -549,5 +516,5 @@ else:
     app.logger.setLevel(gunicorn_logger.level)
     
     # app.logger.setLevel(logging.DEBUG)
-    # fix_fault_tolerance()
+    fix_fault_tolerance()
     
