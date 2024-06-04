@@ -7,4 +7,4 @@ Name (studentid) - github handle:
 - Sebastiaan Beekman (5885116) - @SebastiaanBeekman
 
 Any changes that happened in your team (e.g., a member left):
-- One of our members, Joyce Sung, dropped the course some time during phase 1 or 2.
+- One of our members, Joyce Sung, dropped the course some time during phase 2.
