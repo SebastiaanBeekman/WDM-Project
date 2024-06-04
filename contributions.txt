@@ -2,13 +2,11 @@
   - Ensured fast log id uniqueness
   - Contributed to fault tolerance testing
   - Optimised the final product
-  - Supported the group where needed
 - Nina Oosterlaar:
   - Created code for the logs
   - Created the ids microservice
   - Contributed to fault tolerance testing
   - Optimised the final product
-  - Supported the group where needed
 - Sebastiaan Beekman:
   - Worked on logging
   - Developed fault tolerance
@@ -16,6 +14,5 @@
   - Wrote most of the tests
   - Refactored the codebase (e.g. comments, extra abort checks, structuring)
   - Wrote the README
-  - Supported the group where needed
 
 We all contributed equally to the architecture and design of the code.
