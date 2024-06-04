@@ -194,5 +194,5 @@ pytest
 ## Contributions
 
 * Zoya van Meel: TBD
-* Nina Oosterlaar: TBD
+* Nina Oosterlaar: Creating code for the logs, creating the ids microservice, contributed with testing fault tolerance, optimizing the final product
 * Sebastiaan Beekman: TBD
